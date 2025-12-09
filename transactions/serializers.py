@@ -95,3 +95,22 @@ class TransactionFilterSerializer(serializers.Serializer):
             if attrs['start_date'] > attrs['end_date']:
                 raise serializers.ValidationError("start_date cannot be after end_date")
         return attrs
+    
+class TransactionStatsSerializer(serializers.Serializer):
+    """Serializer for transaction statistics response"""
+    total_transactions = serializers.IntegerField()
+    total_deposits = serializers.IntegerField()
+    total_transfers = serializers.IntegerField()
+    total_deposit_amount = serializers.DecimalField(max_digits=20, decimal_places=2)
+    total_transfer_amount = serializers.DecimalField(max_digits=20, decimal_places=2)
+    successful_transactions = serializers.IntegerField()
+    failed_transactions = serializers.IntegerField()
+    pending_transactions = serializers.IntegerField()
+    today_transactions = serializers.IntegerField()
+    this_month_transactions = serializers.IntegerField()
+    
+    def create(self, validated_data):
+        pass
+    
+    def update(self, instance, validated_data):
+        pass

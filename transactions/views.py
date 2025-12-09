@@ -26,7 +26,7 @@ class TransactionHistoryView(APIView):
         operation_description="Get transaction history with filtering options",
         query_serializer=TransactionFilterSerializer,
         responses={
-            200: TransactionHistorySerializer(many=True),
+            200: TransactionHistorySerializer,
             400: "Bad Request"
         },
         security=[{'Bearer': []}, {'APIKey': []}]
@@ -115,6 +115,10 @@ class TransactionDetailView(generics.RetrieveAPIView):
     lookup_url_kwarg = 'reference'
     
     def get_queryset(self):
+        # Fix for Swagger schema generation
+        if getattr(self, 'swagger_fake_view', False):
+            return Transaction.objects.none()
+        
         # User can only see transactions they're involved in
         return Transaction.objects.filter(
             models.Q(user=self.request.user) |
@@ -147,26 +151,21 @@ class TransactionStatsView(APIView):
     
     @swagger_auto_schema(
         operation_description="Get transaction statistics",
-        responses={
-            200: openapi.Response(
-                description="Transaction statistics",
-                schema=openapi.Schema(
-                    type=openapi.TYPE_OBJECT,
-                    properties={
-                        'total_transactions': openapi.Schema(type=openapi.TYPE_INTEGER),
-                        'total_deposits': openapi.Schema(type=openapi.TYPE_INTEGER),
-                        'total_transfers': openapi.Schema(type=openapi.TYPE_INTEGER),
-                        'total_deposit_amount': openapi.Schema(type=openapi.TYPE_NUMBER),
-                        'total_transfer_amount': openapi.Schema(type=openapi.TYPE_NUMBER),
-                        'successful_transactions': openapi.Schema(type=openapi.TYPE_INTEGER),
-                        'failed_transactions': openapi.Schema(type=openapi.TYPE_INTEGER),
-                        'pending_transactions': openapi.Schema(type=openapi.TYPE_INTEGER),
-                        'today_transactions': openapi.Schema(type=openapi.TYPE_INTEGER),
-                        'this_month_transactions': openapi.Schema(type=openapi.TYPE_INTEGER),
-                    }
-                )
-            )
-        },
+        responses={200: openapi.Schema(
+            type=openapi.TYPE_OBJECT,
+            properties={
+                'total_transactions': openapi.Schema(type=openapi.TYPE_INTEGER),
+                'total_deposits': openapi.Schema(type=openapi.TYPE_INTEGER),
+                'total_transfers': openapi.Schema(type=openapi.TYPE_INTEGER),
+                'total_deposit_amount': openapi.Schema(type=openapi.TYPE_NUMBER),
+                'total_transfer_amount': openapi.Schema(type=openapi.TYPE_NUMBER),
+                'successful_transactions': openapi.Schema(type=openapi.TYPE_INTEGER),
+                'failed_transactions': openapi.Schema(type=openapi.TYPE_INTEGER),
+                'pending_transactions': openapi.Schema(type=openapi.TYPE_INTEGER),
+                'today_transactions': openapi.Schema(type=openapi.TYPE_INTEGER),
+                'this_month_transactions': openapi.Schema(type=openapi.TYPE_INTEGER),
+            }
+        )},
         security=[{'Bearer': []}, {'APIKey': []}]
     )
     def get(self, request):

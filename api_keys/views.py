@@ -5,6 +5,7 @@ from rest_framework.views import APIView
 from drf_yasg.utils import swagger_auto_schema
 from drf_yasg import openapi
 import structlog
+from django.utils import timezone
 
 from .models import APIKey
 from .serializers import (
@@ -28,7 +29,7 @@ class APIKeyListView(generics.ListAPIView):
     
     @swagger_auto_schema(
         operation_description="List all API keys for the authenticated user",
-        responses={200: APIKeySerializer(many=True)},
+        responses={200: APIKeySerializer},
         security=[{'Bearer': []}]
     )
     def get(self, request, *args, **kwargs):
@@ -166,7 +167,12 @@ class RevokeAPIKeyView(APIView):
         operation_description="Revoke/delete an API key",
         request_body=RevokeAPIKeySerializer,
         responses={
-            200: {'detail': 'API key revoked successfully'},
+            200: openapi.Schema(
+                type=openapi.TYPE_OBJECT,
+                properties={
+                    'detail': openapi.Schema(type=openapi.TYPE_STRING)
+                }
+            ),
             400: "Bad Request",
             404: "API key not found"
         },
@@ -221,6 +227,10 @@ class UpdateAPIKeyView(generics.UpdateAPIView):
     permission_classes = [permissions.IsAuthenticated]
     
     def get_queryset(self):
+        # Fix for Swagger schema generation
+        if getattr(self, 'swagger_fake_view', False):
+            return APIKey.objects.none()
+        
         return APIKey.objects.filter(user=self.request.user)
     
     @swagger_auto_schema(

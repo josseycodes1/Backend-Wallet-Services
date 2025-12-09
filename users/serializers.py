@@ -26,6 +26,16 @@ class GoogleAuthSerializer(serializers.Serializer):
     def validate(self, attrs):
         logger.info("Validating Google auth code")
         return attrs
+    
+class GoogleAuthURLSerializer(serializers.Serializer):
+    """Serializer for Google OAuth URL response"""
+    auth_url = serializers.CharField()
+    
+    def create(self, validated_data):
+        pass
+    
+    def update(self, instance, validated_data):
+        pass
 
 class TokenResponseSerializer(serializers.Serializer):
     access = serializers.CharField()

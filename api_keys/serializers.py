@@ -130,3 +130,24 @@ class UpdateAPIKeySerializer(serializers.ModelSerializer):
                 )
         
         return super().update(instance, validated_data)
+    
+
+class APIKeyListResponseSerializer(serializers.Serializer):
+    """Serializer for API key list response"""
+    id = serializers.UUIDField()
+    name = serializers.CharField()
+    masked_key = serializers.CharField()
+    permissions = serializers.ListField()
+    is_active = serializers.BooleanField()
+    expires_at = serializers.DateTimeField()
+    last_used_at = serializers.DateTimeField(allow_null=True)
+    created_at = serializers.DateTimeField()
+    updated_at = serializers.DateTimeField()
+    is_valid = serializers.BooleanField()
+    is_expired = serializers.BooleanField()
+    
+    def create(self, validated_data):
+        pass
+    
+    def update(self, instance, validated_data):
+        pass
