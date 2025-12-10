@@ -37,7 +37,7 @@ class CreateAPIKeySerializer(serializers.Serializer):
     def validate(self, attrs):
         user = self.context['request'].user
         
-        # Check max API keys per user
+       
         active_keys_count = APIKey.objects.filter(
             user=user,
             is_active=True
@@ -48,7 +48,7 @@ class CreateAPIKeySerializer(serializers.Serializer):
                 f"Maximum {settings.MAX_API_KEYS_PER_USER} active API keys allowed per user"
             )
         
-        # Validate permissions
+        
         permissions = attrs['permissions']
         valid_permissions = ['read', 'deposit', 'transfer']
         
@@ -86,7 +86,7 @@ class RolloverAPIKeySerializer(serializers.Serializer):
         try:
             api_key = APIKey.objects.get(id=key_id, user=user)
             
-            # Check if key is expired
+         
             if not api_key.is_expired:
                 raise serializers.ValidationError("Cannot rollover non-expired key")
             
@@ -117,7 +117,7 @@ class UpdateAPIKeySerializer(serializers.ModelSerializer):
         fields = ['name', 'is_active']
     
     def update(self, instance, validated_data):
-        # Don't allow deactivating if it's the only active key
+        
         if 'is_active' in validated_data and not validated_data['is_active']:
             active_keys = APIKey.objects.filter(
                 user=instance.user,

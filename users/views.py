@@ -43,7 +43,7 @@ class GoogleAuthRedirectView(APIView):
     )
     def get(self, request):
         try:
-            # Check if Google OAuth is properly configured
+            
             if not settings.GOOGLE_OAUTH_CLIENT_ID or not settings.GOOGLE_OAUTH_REDIRECT_URI:
                 logger.error("Google OAuth not properly configured")
                 return Response(
@@ -51,31 +51,31 @@ class GoogleAuthRedirectView(APIView):
                     status=status.HTTP_400_BAD_REQUEST
                 )
             
-            # Build Google OAuth URL (similar to your working example)
+            
             google_auth_url = (
                 "https://accounts.google.com/o/oauth2/v2/auth?"
                 f"client_id={settings.GOOGLE_OAUTH_CLIENT_ID}&"
                 f"redirect_uri={settings.GOOGLE_OAUTH_REDIRECT_URI}&"
                 "response_type=code&"
-                "scope=email%20profile&"  # Note: spaces encoded as %20
+                "scope=email%20profile&"  
                 "access_type=offline&"
                 "prompt=consent"
             )
             
             logger.info("Google OAuth URL generated")
             
-            # Check if client wants JSON or redirect
+            
             accept_header = request.headers.get('Accept', '')
             
             if 'application/json' in accept_header or request.GET.get('format') == 'json':
-                # Return JSON for Swagger/API clients
+                
                 return Response({
                     'google_auth_url': google_auth_url,
                     'client_id': settings.GOOGLE_OAUTH_CLIENT_ID,
                     'redirect_uri': settings.GOOGLE_OAUTH_REDIRECT_URI
                 }, status=status.HTTP_200_OK)
             else:
-                # Redirect for browsers
+               
                 return redirect(google_auth_url)
                 
         except Exception as e:
@@ -104,7 +104,7 @@ class GoogleAuthCallbackView(APIView):
         error = request.GET.get('error')
         error_description = request.GET.get('error_description')
         
-        # Check for Google errors first
+        
         if error:
             logger.warning(
                 "Google OAuth error returned",
@@ -119,7 +119,7 @@ class GoogleAuthCallbackView(APIView):
                 status=status.HTTP_400_BAD_REQUEST
             )
         
-        # Check if code is provided
+       
         if not code:
             logger.warning("No authorization code provided in callback")
             return Response(
@@ -131,7 +131,7 @@ class GoogleAuthCallbackView(APIView):
             )
         
         try:
-            # Exchange code for tokens
+            
             token_url = "https://oauth2.googleapis.com/token"
             token_data = {
                 'code': code,
@@ -143,7 +143,7 @@ class GoogleAuthCallbackView(APIView):
             
             token_response = requests.post(token_url, data=token_data)
             
-            # Check if token exchange failed
+            
             if token_response.status_code != 200:
                 error_data = token_response.json()
                 logger.warning(
@@ -163,12 +163,12 @@ class GoogleAuthCallbackView(APIView):
             token_json = token_response.json()
             access_token = token_json.get('access_token')
             
-            # Get user info from Google
+            
             user_info_url = "https://www.googleapis.com/oauth2/v2/userinfo"
             headers = {'Authorization': f'Bearer {access_token}'}
             user_info_response = requests.get(user_info_url, headers=headers)
             
-            # Check if user info fetch failed
+            
             if user_info_response.status_code != 200:
                 logger.warning(
                     "Failed to fetch user info from Google",
@@ -184,7 +184,7 @@ class GoogleAuthCallbackView(APIView):
             
             user_info = user_info_response.json()
             
-            # Get or create user
+           
             email = user_info.get('email')
             google_id = user_info.get('id')
             first_name = user_info.get('given_name', '')
@@ -203,7 +203,7 @@ class GoogleAuthCallbackView(APIView):
                 }
             )
             
-            # Update user if not created
+            
             if not created:
                 user.google_id = google_id
                 user.google_picture = picture
@@ -212,7 +212,7 @@ class GoogleAuthCallbackView(APIView):
                 user.is_verified = True
                 user.save()
             
-            # Generate JWT tokens
+           
             refresh = RefreshToken.for_user(user)
             
             serializer = TokenResponseSerializer({
@@ -279,8 +279,8 @@ class JWTTokenObtainView(APIView):
         logger.warning("JWT token request failed", errors=serializer.errors)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
-class UserProfileView(generics.RetrieveUpdateAPIView):
-    """Get or update user profile"""
+class UserProfileView(generics.RetrieveAPIView):
+    """Get current user profile"""
     serializer_class = UserSerializer
     permission_classes = [permissions.IsAuthenticated]
     
@@ -293,19 +293,3 @@ class UserProfileView(generics.RetrieveUpdateAPIView):
     )
     def get(self, request, *args, **kwargs):
         return super().get(request, *args, **kwargs)
-    
-    @swagger_auto_schema(
-        operation_description="Update current user profile",
-        request_body=UserSerializer,
-        responses={200: UserSerializer}
-    )
-    def put(self, request, *args, **kwargs):
-        return super().put(request, *args, **kwargs)
-    
-    @swagger_auto_schema(
-        operation_description="Partial update current user profile",
-        request_body=UserSerializer,
-        responses={200: UserSerializer}
-    )
-    def patch(self, request, *args, **kwargs):
-        return super().patch(request, *args, **kwargs)

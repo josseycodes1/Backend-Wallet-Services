@@ -12,7 +12,12 @@ SECRET_KEY = os.getenv('SECRET_KEY', 'django-insecure-default-key')
 DEBUG = os.getenv('DEBUG', 'False') == 'True'
 
 ALLOWED_HOSTS = os.getenv('ALLOWED_HOSTS', 'localhost,127.0.0.1').split(',')
-CORS_ALLOWED_ORIGINS = os.getenv('CORS_ALLOWED_ORIGINS', 'http://localhost:3000').split(',')
+CORS_ALLOWED_ORIGINS = os.getenv('CORS_ALLOWED_ORIGINS', 'http://localhost:3000,http://127.0.0.1:8001,http://127.0.0.1:8000').split(',')
+
+
+CORS_ALLOW_ALL_ORIGINS = True  
+
+BASE_URL = os.getenv('BASE_URL', 'http://127.0.0.1:8001')
 
 INSTALLED_APPS = [
     'django.contrib.admin',
@@ -22,13 +27,13 @@ INSTALLED_APPS = [
     'django.contrib.messages',
     'django.contrib.staticfiles',
     
-    # Third party
+   
     'rest_framework',
     'rest_framework_simplejwt',
     'drf_yasg',
     'corsheaders',
     
-    # Local apps
+    
     'users',
     'wallet',
     'transactions',
@@ -80,7 +85,7 @@ DATABASES = {
     }
 }
 
-# Redis (optional)
+# Redis 
 REDIS_URL = os.getenv('REDIS_URL', None)
 if REDIS_URL:
     CACHES = {
@@ -159,7 +164,7 @@ GOOGLE_OAUTH_REDIRECT_URI = os.getenv('GOOGLE_OAUTH_REDIRECT_URI')
 LOG_LEVEL = os.getenv('LOG_LEVEL', 'INFO')
 LOG_FILE = os.getenv('LOG_FILE', BASE_DIR / 'logs/wallet_service.log')
 
-# Create log directory
+#log directory
 os.makedirs(BASE_DIR / 'logs', exist_ok=True)
 
 LOGGING = {
@@ -241,12 +246,27 @@ structlog.configure(
     cache_logger_on_first_use=True,
 )
 
+# Swagger/OpenAPI Settings
 SWAGGER_SETTINGS = {
     'SECURITY_DEFINITIONS': {
         'Bearer': {
             'type': 'apiKey',
             'name': 'Authorization',
-            'in': 'header'
+            'in': 'header',
+            'description': 'JWT Authorization header using the Bearer scheme. Example: "Bearer {token}"'
+        },
+        'APIKey': {
+            'type': 'apiKey',
+            'name': 'X-API-Key',
+            'in': 'header',
+            'description': 'API Key for service-to-service authentication'
         }
     },
+    'SECURITY_REQUIREMENTS': [
+        {
+            'Bearer': [],
+            'APIKey': []
+        }
+    ],
+    'USE_SESSION_AUTH': False,  
 }

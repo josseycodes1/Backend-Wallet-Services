@@ -9,7 +9,7 @@ import structlog
 
 logger = structlog.get_logger(__name__)
 
-# Initialize Paystack
+
 paystack = Paystack(secret_key=settings.PAYSTACK_SECRET_KEY)
 
 class PaystackService:
@@ -17,7 +17,7 @@ class PaystackService:
     def initialize_transaction(email, amount, reference=None):
         """Initialize Paystack transaction"""
         try:
-            # Convert amount to kobo (Paystack uses kobo for NGN)
+           
             amount_in_kobo = int(float(amount) * 100)
             
             response = PaystackTransaction.initialize(
@@ -133,7 +133,7 @@ class WalletTransferService:
         from transactions.models import Transaction
         
         try:
-            # Check if sender can transfer
+            
             can_transfer, message = sender_wallet.can_transfer(amount)
             if not can_transfer:
                 logger.warning(
@@ -145,7 +145,7 @@ class WalletTransferService:
                 )
                 return False, message
             
-            # Create transaction record
+          
             transaction = Transaction.objects.create(
                 sender=sender_wallet.user,
                 recipient=recipient_wallet.user,
@@ -155,22 +155,22 @@ class WalletTransferService:
                 description=description
             )
             
-            # Perform the transfer (atomic operation)
+            
             from django.db import transaction as db_transaction
             
             with db_transaction.atomic():
-                # Deduct from sender
+                
                 sender_wallet.balance -= amount
                 sender_wallet.save(update_fields=['balance', 'updated_at'])
                 
-                # Add to recipient
+                
                 recipient_wallet.balance += amount
                 recipient_wallet.save(update_fields=['balance', 'updated_at'])
                 
-                # Update daily spent
+                
                 sender_wallet.update_daily_spent(amount)
                 
-                # Update transaction status
+               
                 transaction.status = 'success'
                 transaction.save(update_fields=['status', 'updated_at'])
                 

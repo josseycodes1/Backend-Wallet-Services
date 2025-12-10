@@ -23,12 +23,15 @@ class WalletSerializer(serializers.ModelSerializer):
 
 class DepositRequestSerializer(serializers.Serializer):
     amount = serializers.DecimalField(
-        max_digits=20,
+        max_digits=10, 
         decimal_places=2,
-        min_value=100,  # Minimum deposit of 100
-        required=True
+        min_value=100.00, 
+        help_text="Amount to deposit in Naira (minimum: 100 NGN)"
     )
-    email = serializers.EmailField(required=False)
+    email = serializers.EmailField(
+        required=False,
+        help_text="Email for payment receipt (defaults to user's email)"
+    )
     
     def validate_amount(self, value):
         if value <= 0:
@@ -36,8 +39,13 @@ class DepositRequestSerializer(serializers.Serializer):
         return value
 
 class DepositResponseSerializer(serializers.Serializer):
-    reference = serializers.CharField()
-    authorization_url = serializers.URLField()
+    reference = serializers.CharField(max_length=100, help_text="Use this reference to check transaction status")
+    authorization_url = serializers.URLField(help_text="URL to complete payment")
+    amount = serializers.DecimalField(max_digits=10, decimal_places=2, required=False)
+    currency = serializers.CharField(max_length=3, required=False, default='NGN')
+    status = serializers.CharField(max_length=20, required=False, default='pending')
+    status_check_url = serializers.CharField(max_length=200, required=False)
+    message = serializers.CharField(max_length=200, required=False)
     
     def create(self, validated_data):
         pass
@@ -55,7 +63,7 @@ class TransferRequestSerializer(serializers.Serializer):
     amount = serializers.DecimalField(
         max_digits=20,
         decimal_places=2,
-        min_value=1,  # Minimum transfer of 1
+        min_value=1, 
         required=True
     )
     description = serializers.CharField(
@@ -70,7 +78,7 @@ class TransferRequestSerializer(serializers.Serializer):
         return value
     
     def validate_wallet_number(self, value):
-        # Check if wallet number exists and is active
+        
         try:
             wallet = Wallet.objects.get(
                 wallet_number=value,
@@ -81,7 +89,7 @@ class TransferRequestSerializer(serializers.Serializer):
         except Wallet.DoesNotExist:
             raise serializers.ValidationError("Invalid wallet number or wallet is not active")
         
-        # Check if transferring to self
+        
         request = self.context.get('request')
         if request and request.user:
             user_wallet = getattr(request.user, 'wallet', None)

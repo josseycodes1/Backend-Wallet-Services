@@ -62,7 +62,7 @@ class APIKey(models.Model):
         return f"{self.name} - {self.user.email}"
     
     def save(self, *args, **kwargs):
-        # Generate key if not set
+        
         if not self.key:
             self.prefix = settings.API_KEY_PREFIX
             secret_part = secrets.token_urlsafe(settings.API_KEY_LENGTH)
@@ -119,19 +119,19 @@ class APIKey(models.Model):
         elif expiry_string == '1D':
             return now + timezone.timedelta(days=1)
         elif expiry_string == '1M':
-            return now + timezone.timedelta(days=30)  # Approximate month
+            return now + timezone.timedelta(days=30)  
         elif expiry_string == '1Y':
-            return now + timezone.timedelta(days=365)  # Approximate year
+            return now + timezone.timedelta(days=365)  
         else:
             raise ValueError(f"Invalid expiry string: {expiry_string}")
     
     def rollover(self, new_expiry_string):
         """Create a new API key with same permissions"""
-        # Check if current key is expired
+        
         if not self.is_expired:
             raise ValueError("Cannot rollover non-expired key")
         
-        # Create new key
+    
         new_key = APIKey.objects.create(
             user=self.user,
             name=f"{self.name} (Rolled over)",
@@ -139,7 +139,7 @@ class APIKey(models.Model):
             expires_at=APIKey.get_expiry_date(new_expiry_string)
         )
         
-        # Deactivate old key
+      
         self.is_active = False
         self.save(update_fields=['is_active', 'updated_at'])
         

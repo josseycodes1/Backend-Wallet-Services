@@ -24,8 +24,7 @@ class Transaction(models.Model):
     
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     
-    # For deposit/withdrawal: user field is used
-    # For transfer: sender and recipient fields are used
+   
     user = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         on_delete=models.SET_NULL,
@@ -72,12 +71,12 @@ class Transaction(models.Model):
     description = models.TextField(blank=True, null=True)
     metadata = models.JSONField(default=dict, blank=True)
     
-    # Paystack specific fields
+    
     paystack_reference = models.CharField(max_length=100, blank=True, null=True)
     paystack_transaction_id = models.CharField(max_length=100, blank=True, null=True)
     paystack_data = models.JSONField(default=dict, blank=True)
     
-    # Transfer specific fields
+    
     sender_wallet_number = models.CharField(max_length=15, blank=True, null=True)
     recipient_wallet_number = models.CharField(max_length=15, blank=True, null=True)
     
@@ -102,7 +101,7 @@ class Transaction(models.Model):
             return f"{self.transaction_type.title()} {self.id}: {self.user.email if self.user else 'N/A'} - {self.amount}"
     
     def save(self, *args, **kwargs):
-        # Generate reference if not provided
+      
         if not self.reference:
             import secrets
             self.reference = f"TRX_{secrets.token_hex(12).upper()}"

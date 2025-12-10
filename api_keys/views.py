@@ -25,7 +25,11 @@ class APIKeyListView(generics.ListAPIView):
     permission_classes = [permissions.IsAuthenticated]
     
     def get_queryset(self):
-        return APIKey.objects.filter(user=self.request.user).order_by('-created_at')
+        
+        return APIKey.objects.filter(
+            user=self.request.user,
+            is_active=True  
+        ).order_by('-created_at')
     
     @swagger_auto_schema(
         operation_description="List all API keys for the authenticated user",
@@ -126,7 +130,7 @@ class RolloverAPIKeyView(APIView):
         api_key = serializer.validated_data['api_key']
         expiry_string = serializer.validated_data['expiry']
         
-        # Rollover the key
+        
         try:
             new_api_key = api_key.rollover(expiry_string)
             
@@ -194,7 +198,7 @@ class RevokeAPIKeyView(APIView):
         
         api_key = serializer.validated_data['api_key']
         
-        # Check if this is the only active key
+      
         active_keys = APIKey.objects.filter(
             user=request.user,
             is_active=True
@@ -206,7 +210,7 @@ class RevokeAPIKeyView(APIView):
                 status=status.HTTP_400_BAD_REQUEST
             )
         
-        # Deactivate the key
+       
         api_key.is_active = False
         api_key.save(update_fields=['is_active', 'updated_at'])
         
@@ -227,7 +231,7 @@ class UpdateAPIKeyView(generics.UpdateAPIView):
     permission_classes = [permissions.IsAuthenticated]
     
     def get_queryset(self):
-        # Fix for Swagger schema generation
+        
         if getattr(self, 'swagger_fake_view', False):
             return APIKey.objects.none()
         

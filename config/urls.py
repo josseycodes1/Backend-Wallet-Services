@@ -19,7 +19,7 @@ def health_check(request):
         }
         return JsonResponse(response_data)
     except Exception as e:
-        # Return error response if something goes wrong
+       
         return JsonResponse({
             'status': 'error',
             'message': str(e)
@@ -40,25 +40,25 @@ schema_view = get_schema_view(
 )
 
 urlpatterns = [
-    # Admin
+   
     path('admin/', admin.site.urls),
     path('', health_check, name='health-check'),
     
-    # API Documentation
+  
     path('swagger<format>/', schema_view.without_ui(cache_timeout=0), name='schema-json'),
     path('swagger/', schema_view.with_ui('swagger', cache_timeout=0), name='schema-swagger-ui'),
     path('redoc/', schema_view.with_ui('redoc', cache_timeout=0), name='schema-redoc'),
     
-    # Authentication
+    
     path('auth/', include('users.urls')),
     path('auth/token/refresh/', TokenRefreshView.as_view(), name='token_refresh'),
     
-    # Wallet endpoints
+    
     path('wallet/', include('wallet.urls')),
     
-    # Transactions
+   
     path('wallet/transactions/', include('transactions.urls')),
     
-    # API Keys
+
     path('keys/', include('api_keys.urls')),
 ]

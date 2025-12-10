@@ -1,4 +1,4 @@
-from django.db import models  # Add this import
+from django.db import models  
 from django.utils import timezone
 from django.shortcuts import get_object_or_404
 from rest_framework import status, generics, permissions, filters
@@ -41,14 +41,14 @@ class TransactionHistoryView(APIView):
         
         filters_data = filter_serializer.validated_data
         
-        # Base queryset - transactions where user is involved
+       
         queryset = Transaction.objects.filter(
             models.Q(user=request.user) |
             models.Q(sender=request.user) |
             models.Q(recipient=request.user)
         ).distinct()
         
-        # Apply filters
+        
         if filters_data['transaction_type'] != 'all':
             queryset = queryset.filter(transaction_type=filters_data['transaction_type'])
         
@@ -61,14 +61,14 @@ class TransactionHistoryView(APIView):
         if filters_data.get('end_date'):
             queryset = queryset.filter(created_at__date__lte=filters_data['end_date'])
         
-        # Apply pagination
+        
         limit = filters_data['limit']
         offset = filters_data['offset']
         
         total_count = queryset.count()
         transactions = queryset.order_by('-created_at')[offset:offset + limit]
         
-        # Prepare response data
+        
         response_data = []
         for transaction in transactions:
             transaction_data = {
@@ -81,7 +81,7 @@ class TransactionHistoryView(APIView):
                 'counterparty': None
             }
             
-            # Add counterparty info for transfers
+            
             if transaction.transaction_type == 'transfer':
                 if request.user == transaction.sender:
                     transaction_data['counterparty'] = {
@@ -115,11 +115,11 @@ class TransactionDetailView(generics.RetrieveAPIView):
     lookup_url_kwarg = 'reference'
     
     def get_queryset(self):
-        # Fix for Swagger schema generation
+        
         if getattr(self, 'swagger_fake_view', False):
             return Transaction.objects.none()
         
-        # User can only see transactions they're involved in
+        
         return Transaction.objects.filter(
             models.Q(user=self.request.user) |
             models.Q(sender=self.request.user) |
@@ -169,7 +169,7 @@ class TransactionStatsView(APIView):
         security=[{'Bearer': []}, {'APIKey': []}]
     )
     def get(self, request):
-        # Get base queryset
+        
         queryset = Transaction.objects.filter(
             models.Q(user=request.user) |
             models.Q(sender=request.user) |

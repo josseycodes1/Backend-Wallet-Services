@@ -12,25 +12,24 @@ class APIKeyAuthentication(authentication.BaseAuthentication):
     """API Key Authentication"""
     
     def authenticate(self, request):
-        # Get API key from header
+   
         api_key = request.headers.get('X-API-Key')
         
         if not api_key:
             return None
-        
-        # Validate API key
+ 
         try:
             api_key_obj = APIKey.objects.get(
                 key=api_key,
                 is_active=True
             )
             
-            # Check if key is expired
+           
             if api_key_obj.is_expired:
                 logger.warning("API key expired", key=api_key_obj.masked_key)
                 raise AuthenticationFailed('API key has expired')
             
-            # Update last used timestamp
+           
             api_key_obj.update_last_used()
             
             logger.debug(

@@ -10,10 +10,10 @@ class APIKeyMiddleware(MiddlewareMixin):
     """Middleware to log API key usage"""
     
     def process_request(self, request):
-        # Store start time for duration calculation
+       
         request._api_key_start_time = time.time()
         
-        # Get API key from header
+  
         api_key_value = request.headers.get('X-API-Key')
         
         if api_key_value:
@@ -25,16 +25,16 @@ class APIKeyMiddleware(MiddlewareMixin):
                 request.api_key_obj = None
     
     def process_response(self, request, response):
-        # Log API key usage if an API key was used
+      
         if hasattr(request, 'api_key_obj') and request.api_key_obj:
-            # Calculate duration
+           
             start_time = getattr(request, '_api_key_start_time', None)
             duration_ms = 0
             
             if start_time:
                 duration_ms = int((time.time() - start_time) * 1000)
             
-            # Create usage log
+            
             try:
                 APIKeyUsageLog.objects.create(
                     api_key=request.api_key_obj,

@@ -42,7 +42,7 @@ class TransactionSerializer(serializers.ModelSerializer):
         request = self.context.get('request')
         
         if request and request.user:
-            # Show only relevant information based on user role
+            
             if instance.transaction_type == 'transfer':
                 if request.user == instance.sender:
                     data['counterparty'] = {
