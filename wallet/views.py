@@ -97,7 +97,7 @@ class WalletDepositView(APIView):
         security=[{'Bearer': []}, {'APIKey': []}]
     )
     def post(self, request):
-        # Use the imported DepositRequestKoboSerializer instead of creating a new one
+       
         serializer = DepositRequestKoboSerializer(data=request.data)
         if not serializer.is_valid():
             logger.warning("Deposit request validation failed", errors=serializer.errors)
@@ -107,9 +107,9 @@ class WalletDepositView(APIView):
             )
         
         amount_kobo = serializer.validated_data['amount']
-        amount_ngn = amount_kobo / 100  # Convert Kobo to NGN for database storage
+        amount_ngn = amount_kobo / 100  
         
-        # Use authenticated user's email
+      
         email = request.user.email
         if not email:
             return Response(
@@ -118,7 +118,7 @@ class WalletDepositView(APIView):
             )
         
         try:
-            # Get or create wallet
+           
             wallet, created = Wallet.objects.get_or_create(
                 user=request.user,
                 defaults={'currency': 'NGN'}
@@ -127,19 +127,18 @@ class WalletDepositView(APIView):
             if created:
                 logger.info("Wallet created for user", user_id=str(request.user.id))
             
-            # Generate unique reference
+            
             reference = f"DEP_{request.user.id}_{int(timezone.now().timestamp())}"
             
-            # Check for duplicate/ongoing transaction (Idempotency check)
-            # Look for transactions in the last 10 minutes with same amount and user
+            
             time_threshold = timezone.now() - timedelta(minutes=10)
             
-            # Import Transaction here to avoid circular imports
+            
             from transactions.models import Transaction
             
             existing_transaction = Transaction.objects.filter(
                 user=request.user,
-                amount=amount_ngn,  # Check in NGN
+                amount=amount_ngn,  
                 status='pending',
                 created_at__gte=time_threshold
             ).order_by('-created_at').first()
@@ -155,7 +154,7 @@ class WalletDepositView(APIView):
                 response_data = {
                     'reference': existing_transaction.reference,
                     'authorization_url': existing_transaction.metadata.get('authorization_url', ''),
-                    'amount': amount_kobo,  # Return in Kobo
+                    'amount': amount_kobo,  
                     'currency': 'NGN',
                     'status': 'pending',
                     'status_check_url': f"/wallet/deposit/{existing_transaction.reference}/status/",
@@ -170,8 +169,8 @@ class WalletDepositView(APIView):
                 response_serializer = DepositResponseSerializer(response_data)
                 return Response(response_serializer.data, status=status.HTTP_200_OK)
             
-            # Initialize transaction with Paystack (pass amount in Kobo)
-            result = PaystackService.initialize_transaction(email, amount_kobo)  # Pass Kobo to Paystack
+           
+            result = PaystackService.initialize_transaction(email, amount_kobo)  
             
             if not result.get('success'):
                 logger.error(
@@ -189,17 +188,17 @@ class WalletDepositView(APIView):
                     status=status.HTTP_402_PAYMENT_REQUIRED
                 )
             
-            # Create transaction record
+            
             transaction = Transaction.objects.create(
                 user=request.user,
-                amount=amount_ngn,  # Store in NGN
+                amount=amount_ngn,  
                 transaction_type='deposit',
                 status='pending',
                 reference=reference,
                 metadata={
                     'authorization_url': result.get('authorization_url'),
                     'email': email,
-                    'amount_kobo': amount_kobo,  # Store original Kobo amount
+                    'amount_kobo': amount_kobo, 
                     'amount_ngn': amount_ngn,
                     'paystack_reference': result.get('reference'),
                     'paystack_response': result
@@ -214,11 +213,11 @@ class WalletDepositView(APIView):
                 reference=reference
             )
             
-            # Prepare response (return amount in Kobo)
+            
             response_data = {
                 'reference': reference,
                 'authorization_url': result.get('authorization_url'),
-                'amount': amount_kobo,  # Return in Kobo
+                'amount': amount_kobo,  
                 'currency': 'NGN',
                 'status': 'pending',
                 'status_check_url': f"/wallet/deposit/{reference}/status/",
@@ -355,17 +354,26 @@ class WalletBalanceView(APIView):
             )
 
 class DepositStatusView(APIView):
-    """Check deposit status (manual verification)"""
+    """Check deposit status with Paystack verification"""
     permission_classes = [RequireBothJWTAuthAndAPIKeyPermission]
     
     @swagger_auto_schema(
-        operation_description="Check deposit status by reference",
+        operation_description="Check deposit status by reference with optional Paystack verification",
         manual_parameters=[
             openapi.Parameter(
                 'reference',
                 openapi.IN_PATH,
                 description="Transaction reference",
-                type=openapi.TYPE_STRING
+                type=openapi.TYPE_STRING,
+                required=True
+            ),
+            openapi.Parameter(
+                'refresh',
+                openapi.IN_QUERY,
+                description="Force refresh from Paystack (true/false)",
+                type=openapi.TYPE_BOOLEAN,
+                required=False,
+                default=False
             )
         ],
         responses={
@@ -375,40 +383,159 @@ class DepositStatusView(APIView):
                     type=openapi.TYPE_OBJECT,
                     properties={
                         'reference': openapi.Schema(type=openapi.TYPE_STRING),
-                        'status': openapi.Schema(type=openapi.TYPE_STRING),
-                        'amount': openapi.Schema(type=openapi.TYPE_NUMBER),
-                        'currency': openapi.Schema(type=openapi.TYPE_STRING)
+                        'status': openapi.Schema(
+                            type=openapi.TYPE_STRING,
+                            enum=['pending', 'success', 'failed', 'abandoned']
+                        ),
+                        'amount_kobo': openapi.Schema(type=openapi.TYPE_INTEGER),
+                        'amount_ngn': openapi.Schema(type=openapi.TYPE_NUMBER),
+                        'currency': openapi.Schema(type=openapi.TYPE_STRING),
+                        'paid_at': openapi.Schema(
+                            type=openapi.TYPE_STRING,
+                            format='date-time',
+                            nullable=True
+                        ),
+                        'authorization_url': openapi.Schema(
+                            type=openapi.TYPE_STRING,
+                            format='url',
+                            nullable=True
+                        ),
+                        'requires_action': openapi.Schema(type=openapi.TYPE_BOOLEAN)
                     }
                 )
             ),
-            404: "Transaction not found"
+            404: "Transaction not found",
+            500: "Internal server error"
         },
         security=[{'Bearer': []}, {'APIKey': []}]
     )
     def get(self, request, reference):
+        """Check deposit status with optional Paystack verification"""
         
-        from transactions.models import Transaction
+        refresh = request.GET.get('refresh', 'false').lower() == 'true'
         
         try:
+           
+            from transactions.models import Transaction
+            
+            
             transaction = Transaction.objects.get(
                 reference=reference,
                 user=request.user,
                 transaction_type='deposit'
             )
             
+            
+            should_verify = (
+                refresh or 
+                transaction.status == 'pending' or
+                (transaction.created_at and 
+                 timezone.now() - transaction.created_at < timedelta(hours=24))
+            )
+            
+            paystack_verification = None
+            
+            if should_verify:
+               
+                paystack_reference = transaction.metadata.get('paystack_reference')
+                if not paystack_reference and 'reference' in transaction.metadata:
+                    paystack_reference = transaction.metadata.get('reference')
+                
+                
+                if paystack_reference:
+                    paystack_verification = PaystackService.verify_transaction(paystack_reference)
+                    
+                    if paystack_verification.get('success'):
+                        paystack_status = paystack_verification.get('status')
+                        
+                        
+                        status_mapping = {
+                            'success': 'success',
+                            'failed': 'failed',
+                            'abandoned': 'abandoned',
+                            'pending': 'pending'
+                        }
+                        
+                        new_status = status_mapping.get(paystack_status, 'pending')
+                        
+                        
+                        if new_status != transaction.status:
+                            transaction.status = new_status
+                            
+                           
+                            if 'data' in paystack_verification:
+                                transaction.metadata['paystack_verification'] = paystack_verification['data']
+                                transaction.metadata['last_verified_at'] = timezone.now().isoformat()
+                            
+                           
+                            if new_status == 'success':
+                                paid_at_str = paystack_verification.get('data', {}).get('paid_at')
+                                if paid_at_str:
+                                    try:
+                                       
+                                        from django.utils.dateparse import parse_datetime
+                                        paid_at = parse_datetime(paid_at_str)
+                                        if paid_at:
+                                            transaction.paid_at = paid_at
+                                    except (ValueError, TypeError):
+                                        transaction.paid_at = timezone.now()
+                                else:
+                                    transaction.paid_at = timezone.now()
+                            
+                            transaction.save()
+                            
+                            logger.info(
+                                "Transaction status updated from Paystack",
+                                reference=reference,
+                                old_status=transaction.status,
+                                new_status=new_status,
+                                paystack_status=paystack_status
+                            )
+                    else:
+                        logger.warning(
+                            "Paystack verification failed",
+                            reference=reference,
+                            paystack_error=paystack_verification.get('message')
+                        )
+            
+            
+            authorization_url = transaction.metadata.get('authorization_url', '')
+            
+            
+            requires_action = (
+                transaction.status == 'pending' and 
+                authorization_url and
+                (not transaction.paid_at or 
+                 timezone.now() - transaction.created_at < timedelta(minutes=30))
+            )
+            
+            
+            amount_kobo = transaction.metadata.get('amount_kobo')
+            if not amount_kobo and transaction.amount:
+                amount_kobo = int(transaction.amount * 100)
+            
+            response_data = {
+                'reference': transaction.reference,
+                'status': transaction.status,
+                'amount_kobo': amount_kobo,
+                'amount_ngn': transaction.amount if transaction.amount else amount_kobo / 100,
+                'currency': 'NGN',
+                'paid_at': transaction.metadata.get('paid_at') if transaction.metadata.get('paid_at') else None,
+                'authorization_url': authorization_url if requires_action else None,
+                'requires_action': requires_action,
+                'verified_with_paystack': paystack_verification is not None and paystack_verification.get('success'),
+                'last_updated': transaction.updated_at.isoformat() if transaction.updated_at else None
+            }
+            
             logger.info(
                 "Deposit status checked",
                 reference=reference,
                 user_id=str(request.user.id),
-                status=transaction.status
+                status=transaction.status,
+                verified=paystack_verification is not None
             )
             
-            return Response({
-                'reference': transaction.reference,
-                'status': transaction.status,
-                'amount': transaction.amount,
-                'currency': 'NGN' 
-            }, status=status.HTTP_200_OK)
+            return Response(response_data, status=status.HTTP_200_OK)
             
         except Transaction.DoesNotExist:
             logger.warning(
@@ -418,8 +545,28 @@ class DepositStatusView(APIView):
             )
             
             return Response(
-                {'error': 'Transaction not found'},
+                {
+                    'error': 'Transaction not found',
+                    'message': 'No deposit transaction found with this reference',
+                    'reference': reference,
+                    'user_id': str(request.user.id)
+                },
                 status=status.HTTP_404_NOT_FOUND
+            )
+        except Exception as e:
+            logger.error(
+                "Error checking deposit status",
+                reference=reference,
+                user_id=str(request.user.id),
+                error=str(e)
+            )
+            
+            return Response(
+                {
+                    'error': 'Internal server error',
+                    'detail': str(e)
+                },
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 
 @api_view(['POST'])
