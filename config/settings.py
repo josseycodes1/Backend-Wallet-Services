@@ -224,17 +224,11 @@ if not DEBUG:
 LOG_LEVEL = os.getenv('LOG_LEVEL', 'INFO')
 LOG_FILE = os.getenv('LOG_FILE', BASE_DIR / 'logs/wallet_service.log')
 
-# Create log directory
-os.makedirs(BASE_DIR / 'logs', exist_ok=True)
-
+# Logging Configuration - SIMPLE FIX
 LOGGING = {
     'version': 1,
     'disable_existing_loggers': False,
     'formatters': {
-        'json_formatter': {
-            '()': structlog.stdlib.ProcessorFormatter,
-            'processor': structlog.processors.JSONRenderer(),
-        },
         'console_formatter': {
             '()': structlog.stdlib.ProcessorFormatter,
             'processor': structlog.processors.KeyValueRenderer(
@@ -247,43 +241,36 @@ LOGGING = {
             'class': 'logging.StreamHandler',
             'formatter': 'console_formatter',
         },
-        'file': {
-            'class': 'logging.handlers.RotatingFileHandler',
-            'filename': LOG_FILE,
-            'maxBytes': 10485760,  # 10MB
-            'backupCount': 5,
-            'formatter': 'json_formatter',
-        },
     },
     'loggers': {
         '': {
-            'handlers': ['console', 'file'],
-            'level': LOG_LEVEL,
+            'handlers': ['console'],
+            'level': os.getenv('LOG_LEVEL', 'INFO'),
             'propagate': True,
         },
         'django': {
-            'handlers': ['console', 'file'],
+            'handlers': ['console'],
             'level': 'INFO',
             'propagate': False,
         },
         'users': {
-            'handlers': ['console', 'file'],
-            'level': LOG_LEVEL,
+            'handlers': ['console'],
+            'level': os.getenv('LOG_LEVEL', 'INFO'),
             'propagate': False,
         },
         'wallet': {
-            'handlers': ['console', 'file'],
-            'level': LOG_LEVEL,
+            'handlers': ['console'],
+            'level': os.getenv('LOG_LEVEL', 'INFO'),
             'propagate': False,
         },
         'transactions': {
-            'handlers': ['console', 'file'],
-            'level': LOG_LEVEL,
+            'handlers': ['console'],
+            'level': os.getenv('LOG_LEVEL', 'INFO'),
             'propagate': False,
         },
         'api_keys': {
-            'handlers': ['console', 'file'],
-            'level': LOG_LEVEL,
+            'handlers': ['console'],
+            'level': os.getenv('LOG_LEVEL', 'INFO'),
             'propagate': False,
         },
     },
