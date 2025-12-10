@@ -7,19 +7,24 @@ from rest_framework.decorators import api_view, permission_classes
 from drf_yasg.utils import swagger_auto_schema
 from drf_yasg import openapi
 import structlog
+from datetime import timedelta
+from decimal import Decimal
+import json
+from django.utils import timezone 
 
 from .models import Wallet
 from .serializers import (
     WalletSerializer,
-    DepositRequestSerializer,
     DepositResponseSerializer,
     TransferRequestSerializer,
     TransferResponseSerializer,
     BalanceResponseSerializer,
-    WalletNumberSerializer
+    WalletNumberSerializer,
+    DepositRequestKoboSerializer
 )
 from .services import PaystackService, WalletTransferService
 from api_keys.permissions import HasPermission, RequireBothJWTAuthAndAPIKeyPermission
+from rest_framework import serializers, status
 
 logger = structlog.get_logger(__name__)
 
@@ -70,9 +75,21 @@ class WalletDepositView(APIView):
     permission_classes = [RequireBothJWTAuthAndAPIKeyPermission]
     
     @swagger_auto_schema(
-        operation_description="Initialize a deposit transaction with Paystack. Returns a reference you can use to check transaction status.",
-        request_body=DepositRequestSerializer,
+        operation_description="Initialize a deposit transaction with Paystack. Amount should be in Kobo (minimum 100 Kobo = 1 NGN). Returns a reference you can use to check transaction status.",
+        request_body=openapi.Schema(
+            type=openapi.TYPE_OBJECT,
+            required=['amount'],
+            properties={
+                'amount': openapi.Schema(
+                    type=openapi.TYPE_INTEGER,
+                    description='Amount in Kobo (minimum 100 Kobo = 1 NGN)',
+                    minimum=100,
+                    example=5000
+                )
+            }
+        ),
         responses={
+            201: DepositResponseSerializer,
             200: DepositResponseSerializer,
             400: "Bad Request",
             403: "Forbidden"
@@ -80,79 +97,155 @@ class WalletDepositView(APIView):
         security=[{'Bearer': []}, {'APIKey': []}]
     )
     def post(self, request):
-        serializer = DepositRequestSerializer(data=request.data)
+        # Use the imported DepositRequestKoboSerializer instead of creating a new one
+        serializer = DepositRequestKoboSerializer(data=request.data)
         if not serializer.is_valid():
             logger.warning("Deposit request validation failed", errors=serializer.errors)
-            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+            return Response(
+                {'error': 'Invalid input', 'errors': serializer.errors},
+                status=status.HTTP_400_BAD_REQUEST
+            )
         
-        amount = serializer.validated_data['amount']
-        email = serializer.validated_data.get('email', request.user.email)
+        amount_kobo = serializer.validated_data['amount']
+        amount_ngn = amount_kobo / 100  # Convert Kobo to NGN for database storage
         
-       
-        wallet, created = Wallet.objects.get_or_create(
-            user=request.user,
-            defaults={'currency': 'NGN'}
-        )
+        # Use authenticated user's email
+        email = request.user.email
+        if not email:
+            return Response(
+                {'error': 'User email is required for payment'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
         
-        if created:
-            logger.info("Wallet created for user", user_id=str(request.user.id))
-        
-       
-        result = PaystackService.initialize_transaction(email, amount)
-        
-        if result['success']:
+        try:
+            # Get or create wallet
+            wallet, created = Wallet.objects.get_or_create(
+                user=request.user,
+                defaults={'currency': 'NGN'}
+            )
             
+            if created:
+                logger.info("Wallet created for user", user_id=str(request.user.id))
+            
+            # Generate unique reference
+            reference = f"DEP_{request.user.id}_{int(timezone.now().timestamp())}"
+            
+            # Check for duplicate/ongoing transaction (Idempotency check)
+            # Look for transactions in the last 10 minutes with same amount and user
+            time_threshold = timezone.now() - timedelta(minutes=10)
+            
+            # Import Transaction here to avoid circular imports
             from transactions.models import Transaction
+            
+            existing_transaction = Transaction.objects.filter(
+                user=request.user,
+                amount=amount_ngn,  # Check in NGN
+                status='pending',
+                created_at__gte=time_threshold
+            ).order_by('-created_at').first()
+            
+            if existing_transaction:
+                logger.info(
+                    "Duplicate deposit request detected, returning existing transaction",
+                    user_id=str(request.user.id),
+                    amount=amount_ngn,
+                    reference=existing_transaction.reference
+                )
+                
+                response_data = {
+                    'reference': existing_transaction.reference,
+                    'authorization_url': existing_transaction.metadata.get('authorization_url', ''),
+                    'amount': amount_kobo,  # Return in Kobo
+                    'currency': 'NGN',
+                    'status': 'pending',
+                    'status_check_url': f"/wallet/deposit/{existing_transaction.reference}/status/",
+                    'message': f"Use this reference '{existing_transaction.reference}' to check payment status",
+                    'instructions': [
+                        f"1. Use reference '{existing_transaction.reference}' to check status",
+                        "2. Visit authorization_url to complete payment",
+                        "3. Check status at GET /wallet/deposit/{reference}/status/"
+                    ]
+                }
+                
+                response_serializer = DepositResponseSerializer(response_data)
+                return Response(response_serializer.data, status=status.HTTP_200_OK)
+            
+            # Initialize transaction with Paystack (pass amount in Kobo)
+            result = PaystackService.initialize_transaction(email, amount_kobo)  # Pass Kobo to Paystack
+            
+            if not result.get('success'):
+                logger.error(
+                    "Paystack deposit initialization failed",
+                    user_id=str(request.user.id),
+                    amount_kobo=amount_kobo,
+                    error=result.get('message')
+                )
+                
+                return Response(
+                    {
+                        'error': 'Payment initialization failed',
+                        'detail': result.get('message', 'Paystack service error')
+                    },
+                    status=status.HTTP_402_PAYMENT_REQUIRED
+                )
+            
+            # Create transaction record
             transaction = Transaction.objects.create(
                 user=request.user,
-                amount=amount,
+                amount=amount_ngn,  # Store in NGN
                 transaction_type='deposit',
                 status='pending',
-                reference=result['reference'],
+                reference=reference,
                 metadata={
-                    'authorization_url': result['authorization_url'],
+                    'authorization_url': result.get('authorization_url'),
                     'email': email,
-                    'amount': amount
+                    'amount_kobo': amount_kobo,  # Store original Kobo amount
+                    'amount_ngn': amount_ngn,
+                    'paystack_reference': result.get('reference'),
+                    'paystack_response': result
                 }
             )
             
             logger.info(
-                "Deposit initialized",
+                "Deposit initialized successfully",
                 user_id=str(request.user.id),
-                amount=amount,
-                reference=result['reference']
+                amount_kobo=amount_kobo,
+                amount_ngn=amount_ngn,
+                reference=reference
             )
             
-            
+            # Prepare response (return amount in Kobo)
             response_data = {
-                'reference': result['reference'],
-                'authorization_url': result['authorization_url'],
-                'amount': amount,
+                'reference': reference,
+                'authorization_url': result.get('authorization_url'),
+                'amount': amount_kobo,  # Return in Kobo
                 'currency': 'NGN',
                 'status': 'pending',
-                'status_check_url': f"/wallet/deposit/{result['reference']}/status/",
-                'message': f"Use this reference '{result['reference']}' to check payment status",
+                'status_check_url': f"/wallet/deposit/{reference}/status/",
+                'message': f"Use this reference '{reference}' to check payment status",
                 'instructions': [
-                    f"1. Use reference '{result['reference']}' to check status",
+                    f"1. Use reference '{reference}' to check status",
                     "2. Visit authorization_url to complete payment",
                     "3. Check status at GET /wallet/deposit/{reference}/status/"
                 ]
             }
             
             response_serializer = DepositResponseSerializer(response_data)
+            return Response(response_serializer.data, status=status.HTTP_201_CREATED)
             
-            return Response(response_serializer.data, status=status.HTTP_200_OK)
-        else:
+        except Exception as e:
             logger.error(
-                "Deposit initialization failed",
+                "Unexpected error in deposit initialization",
                 user_id=str(request.user.id),
-                amount=amount,
-                error=result.get('message')
+                error=str(e)
             )
             
             return Response(
-                {'error': result.get('message', 'Payment initialization failed')},
-                status=status.HTTP_400_BAD_REQUEST
+                {
+                    'error': 'Internal server error',
+                    'detail': str(e)
+                },
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 
 class WalletTransferView(APIView):

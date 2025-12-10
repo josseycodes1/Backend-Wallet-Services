@@ -21,27 +21,18 @@ class WalletSerializer(serializers.ModelSerializer):
             'last_reset_date', 'created_at', 'updated_at'
         ]
 
-class DepositRequestSerializer(serializers.Serializer):
-    amount = serializers.DecimalField(
-        max_digits=10, 
-        decimal_places=2,
-        min_value=100.00, 
-        help_text="Amount to deposit in Naira (minimum: 100 NGN)"
-    )
-    email = serializers.EmailField(
-        required=False,
-        help_text="Email for payment receipt (defaults to user's email)"
-    )
+class DepositRequestKoboSerializer(serializers.Serializer):
+    amount = serializers.IntegerField(min_value=100, help_text="Amount in Kobo (minimum 100 Kobo = 1 NGN)")
     
     def validate_amount(self, value):
-        if value <= 0:
-            raise serializers.ValidationError("Amount must be greater than 0")
+        if value < 100:
+            raise serializers.ValidationError("Amount must be at least 100 Kobo (1 NGN)")
         return value
 
 class DepositResponseSerializer(serializers.Serializer):
     reference = serializers.CharField(max_length=100, help_text="Use this reference to check transaction status")
     authorization_url = serializers.URLField(help_text="URL to complete payment")
-    amount = serializers.DecimalField(max_digits=10, decimal_places=2, required=False)
+    amount = serializers.IntegerField(help_text="Amount in Kobo")  # Changed to IntegerField
     currency = serializers.CharField(max_length=3, required=False, default='NGN')
     status = serializers.CharField(max_length=20, required=False, default='pending')
     status_check_url = serializers.CharField(max_length=200, required=False)
@@ -52,6 +43,7 @@ class DepositResponseSerializer(serializers.Serializer):
     
     def update(self, instance, validated_data):
         pass
+    
 
 class TransferRequestSerializer(serializers.Serializer):
     wallet_number = serializers.CharField(
