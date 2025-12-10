@@ -1,0 +1,26 @@
+# leapcell.yaml
+name: wallet-service
+description: Wallet Service with Paystack & Google OAuth
+env: python
+build:
+  command: |
+    pip install -r requirements.txt
+    python manage.py collectstatic --noinput
+  publish: dist
+run:
+  command: gunicorn config.wsgi:application --bind 0.0.0.0:$PORT
+  port: 8000
+  env:
+    - DEBUG=False
+    - SECRET_KEY
+    - DATABASE_URL
+    - REDIS_URL
+    - PAYSTACK_SECRET_KEY
+    - PAYSTACK_PUBLIC_KEY
+    - PAYSTACK_WEBHOOK_SECRET
+    - GOOGLE_OAUTH_CLIENT_ID
+    - GOOGLE_OAUTH_CLIENT_SECRET
+    - SITE_URL
+    - API_BASE_URL
+    - CORS_ALLOWED_ORIGINS
+    - ALLOWED_HOSTS

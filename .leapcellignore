@@ -1,0 +1,22 @@
+# .leapcellignore
+*.pyc
+__pycache__/
+.env
+venv/
+env/
+*.sqlite3
+*.db
+media/
+*.log
+tests/
+test.py
+coverage.xml
+htmlcov/
+.pytest_cache/
+.mypy_cache/
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
