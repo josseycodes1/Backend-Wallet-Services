@@ -41,7 +41,7 @@ class DepositRequestSerializer(serializers.Serializer):
 class DepositResponseSerializer(serializers.Serializer):
     reference = serializers.CharField(max_length=100, help_text="Use this reference to check transaction status")
     authorization_url = serializers.URLField(help_text="URL to complete payment")
-    amount = serializers.DecimalField(max_digits=10, decimal_places=2, required=False, coerce_to_string=True)
+    amount = serializers.DecimalField(max_digits=10, decimal_places=2, required=False)
     currency = serializers.CharField(max_length=3, required=False, default='NGN')
     status = serializers.CharField(max_length=20, required=False, default='pending')
     status_check_url = serializers.CharField(max_length=200, required=False)
