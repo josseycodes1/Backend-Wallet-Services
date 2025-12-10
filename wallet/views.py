@@ -249,7 +249,7 @@ class WalletDepositView(APIView):
 
 class WalletTransferView(APIView):
     """Transfer funds to another wallet"""
-    permission_classes = [RequireBothJWTAuthAndAPIKeyPermission]
+    permission_classes = [permissions.IsAuthenticated]  # Use simple authentication only
     
     @swagger_auto_schema(
         operation_description="Transfer funds to another user's wallet",
@@ -259,7 +259,7 @@ class WalletTransferView(APIView):
             400: "Bad Request",
             403: "Forbidden"
         },
-        security=[{'Bearer': []}, {'APIKey': []}]
+        security=[{'Bearer': []}]  # Only JWT, no API key required
     )
     def post(self, request):
         serializer = TransferRequestSerializer(
@@ -275,36 +275,126 @@ class WalletTransferView(APIView):
         amount = serializer.validated_data['amount']
         description = serializer.validated_data.get('description', '')
         
-       
+        # Get sender wallet
         sender_wallet = get_object_or_404(Wallet, user=request.user)
         
+        # Check if recipient exists (using serializer context)
+        recipient_wallet = serializer.context.get('recipient_wallet')
+        if not recipient_wallet:
+            return Response(
+                {
+                    'status': 'failed',
+                    'message': f'Wallet with number {wallet_number} not found'
+                },
+                status=status.HTTP_404_NOT_FOUND
+            )
         
-        recipient_wallet = serializer.context['recipient_wallet']
+        # Check if trying to transfer to self
+        if sender_wallet.wallet_number == recipient_wallet.wallet_number:
+            return Response(
+                {
+                    'status': 'failed',
+                    'message': 'Cannot transfer to your own wallet'
+                },
+                status=status.HTTP_400_BAD_REQUEST
+            )
         
+        # Validate amount
+        try:
+            amount_decimal = Decimal(str(amount))
+        except (ValueError, TypeError):
+            return Response(
+                {
+                    'status': 'failed',
+                    'message': 'Invalid amount format'
+                },
+                status=status.HTTP_400_BAD_REQUEST
+            )
         
-        success, message, transaction = WalletTransferService.transfer_funds(
-            sender_wallet=sender_wallet,
-            recipient_wallet=recipient_wallet,
-            amount=amount,
-            description=description
-        )
+        # Check sender has sufficient balance
+        if sender_wallet.balance < amount_decimal:
+            return Response(
+                {
+                    'status': 'failed',
+                    'message': f'Insufficient balance. Available: {sender_wallet.balance} NGN'
+                },
+                status=status.HTTP_400_BAD_REQUEST
+            )
         
-        if success:
-            response_serializer = TransferResponseSerializer({
-                'status': 'success',
-                'message': message,
-                'transaction_id': transaction.id if transaction else None,
-                'reference': str(transaction.id) if transaction else None
-            })
+        # Check minimum transfer amount (100 Kobo = 1 NGN)
+        if amount_decimal < Decimal('1.00'):
+            return Response(
+                {
+                    'status': 'failed',
+                    'message': 'Minimum transfer amount is 1.00 NGN'
+                },
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        try:
+            # Perform the transfer
+            from django.db import transaction as db_transaction
             
-            return Response(response_serializer.data, status=status.HTTP_200_OK)
-        else:
+            with db_transaction.atomic():
+                # Update sender balance
+                sender_wallet.balance -= amount_decimal
+                sender_wallet.save(update_fields=['balance', 'updated_at'])
+                
+                # Update recipient balance
+                recipient_wallet.balance += amount_decimal
+                recipient_wallet.save(update_fields=['balance', 'updated_at'])
+                
+                # Create transaction record
+                from transactions.models import Transaction
+                transaction = Transaction.objects.create(
+                    sender=request.user,
+                    recipient=recipient_wallet.user,
+                    amount=amount_decimal,
+                    transaction_type='transfer',
+                    status='success',
+                    sender_wallet_number=sender_wallet.wallet_number,
+                    recipient_wallet_number=recipient_wallet.wallet_number,
+                    description=description,
+                    metadata={
+                        'transfer_type': 'wallet_to_wallet',
+                        'sender_email': request.user.email,
+                        'recipient_email': recipient_wallet.user.email,
+                        'amount_ngn': str(amount_decimal)
+                    }
+                )
+                
+                logger.info(
+                    "Transfer completed successfully",
+                    transaction_id=str(transaction.id),
+                    sender=sender_wallet.wallet_number,
+                    recipient=recipient_wallet.wallet_number,
+                    amount=str(amount_decimal)
+                )
+                
+                response_serializer = TransferResponseSerializer({
+                    'status': 'success',
+                    'message': f'Transfer of {amount_decimal} NGN to wallet {wallet_number} completed successfully',
+                    'transaction_id': transaction.id,
+                    'reference': transaction.reference
+                })
+                
+                return Response(response_serializer.data, status=status.HTTP_200_OK)
+                
+        except Exception as e:
+            logger.error(
+                "Transfer failed",
+                sender=sender_wallet.wallet_number,
+                recipient=recipient_wallet.wallet_number,
+                amount=str(amount_decimal),
+                error=str(e)
+            )
+            
             response_serializer = TransferResponseSerializer({
                 'status': 'failed',
-                'message': message
+                'message': f'Transfer failed: {str(e)}'
             })
             
-            return Response(response_serializer.data, status=status.HTTP_400_BAD_REQUEST)
+            return Response(response_serializer.data, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 class WalletBalanceView(APIView):
     """Get wallet balance"""
