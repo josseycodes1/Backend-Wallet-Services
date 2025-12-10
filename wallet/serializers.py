@@ -95,6 +95,8 @@ class TransferResponseSerializer(serializers.Serializer):
     message = serializers.CharField()
     transaction_id = serializers.UUIDField(required=False)
     reference = serializers.CharField(required=False)
+    amount_kobo = serializers.IntegerField(required=False)  # Add this
+    amount_ngn = serializers.DecimalField(max_digits=20, decimal_places=2, required=False)  # Add this
     
     def create(self, validated_data):
         pass

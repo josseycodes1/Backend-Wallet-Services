@@ -248,21 +248,87 @@ class WalletDepositView(APIView):
             )
 
 class WalletTransferView(APIView):
-    """Transfer funds to another wallet"""
-    permission_classes = [permissions.IsAuthenticated]  # Use simple authentication only
+    """Transfer funds to another wallet - amount in Kobo"""
+    permission_classes = [permissions.IsAuthenticated]
     
     @swagger_auto_schema(
-        operation_description="Transfer funds to another user's wallet",
-        request_body=TransferRequestSerializer,
+        operation_description="Transfer funds to another user's wallet. Amount should be in Kobo (minimum 100 Kobo = 1 NGN).",
+        request_body=openapi.Schema(
+            type=openapi.TYPE_OBJECT,
+            required=['wallet_number', 'amount'],
+            properties={
+                'wallet_number': openapi.Schema(
+                    type=openapi.TYPE_STRING,
+                    description="Recipient's 15-digit wallet number",
+                    minLength=15,
+                    maxLength=15,
+                    example="453381966070708"
+                ),
+                'amount': openapi.Schema(
+                    type=openapi.TYPE_INTEGER,
+                    description='Amount in Kobo (minimum 100 Kobo = 1 NGN)',
+                    minimum=100,
+                    example=5000
+                ),
+                'description': openapi.Schema(
+                    type=openapi.TYPE_STRING,
+                    description="Transfer description (optional)",
+                    maxLength=255
+                )
+            }
+        ),
         responses={
             200: TransferResponseSerializer,
             400: "Bad Request",
             403: "Forbidden"
         },
-        security=[{'Bearer': []}]  # Only JWT, no API key required
+        security=[{'Bearer': []}]
     )
     def post(self, request):
-        serializer = TransferRequestSerializer(
+      
+        class TransferKoboRequestSerializer(serializers.Serializer):
+            wallet_number = serializers.CharField(
+                max_length=15,
+                min_length=15,
+                required=True,
+                help_text="Recipient's 15-digit wallet number"
+            )
+            amount = serializers.IntegerField(
+                min_value=100,
+                required=True,
+                help_text="Amount in Kobo (minimum 100 Kobo = 1 NGN)"
+            )
+            description = serializers.CharField(
+                max_length=255,
+                required=False,
+                allow_blank=True
+            )
+            
+            def validate_amount(self, value):
+                if value < 100:
+                    raise serializers.ValidationError("Amount must be at least 100 Kobo (1 NGN)")
+                return value
+            
+            def validate_wallet_number(self, value):
+                try:
+                    wallet = Wallet.objects.get(
+                        wallet_number=value,
+                        status='active',
+                        is_locked=False
+                    )
+                    self.context['recipient_wallet'] = wallet
+                except Wallet.DoesNotExist:
+                    raise serializers.ValidationError("Invalid wallet number or wallet is not active")
+                
+                request = self.context.get('request')
+                if request and request.user:
+                    user_wallet = getattr(request.user, 'wallet', None)
+                    if user_wallet and user_wallet.wallet_number == value:
+                        raise serializers.ValidationError("Cannot transfer to your own wallet")
+                
+                return value
+        
+        serializer = TransferKoboRequestSerializer(
             data=request.data,
             context={'request': request}
         )
@@ -272,13 +338,16 @@ class WalletTransferView(APIView):
             return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
         
         wallet_number = serializer.validated_data['wallet_number']
-        amount = serializer.validated_data['amount']
+        amount_kobo = serializer.validated_data['amount']
         description = serializer.validated_data.get('description', '')
         
-        # Get sender wallet
+        
+        amount_ngn = amount_kobo / 100
+        
+      
         sender_wallet = get_object_or_404(Wallet, user=request.user)
         
-        # Check if recipient exists (using serializer context)
+        
         recipient_wallet = serializer.context.get('recipient_wallet')
         if not recipient_wallet:
             return Response(
@@ -289,7 +358,7 @@ class WalletTransferView(APIView):
                 status=status.HTTP_404_NOT_FOUND
             )
         
-        # Check if trying to transfer to self
+       
         if sender_wallet.wallet_number == recipient_wallet.wallet_number:
             return Response(
                 {
@@ -299,57 +368,35 @@ class WalletTransferView(APIView):
                 status=status.HTTP_400_BAD_REQUEST
             )
         
-        # Validate amount
-        try:
-            amount_decimal = Decimal(str(amount))
-        except (ValueError, TypeError):
+        # Check sender has sufficient balance (in NGN)
+        if sender_wallet.balance < Decimal(str(amount_ngn)):
             return Response(
                 {
                     'status': 'failed',
-                    'message': 'Invalid amount format'
-                },
-                status=status.HTTP_400_BAD_REQUEST
-            )
-        
-        # Check sender has sufficient balance
-        if sender_wallet.balance < amount_decimal:
-            return Response(
-                {
-                    'status': 'failed',
-                    'message': f'Insufficient balance. Available: {sender_wallet.balance} NGN'
-                },
-                status=status.HTTP_400_BAD_REQUEST
-            )
-        
-        # Check minimum transfer amount (100 Kobo = 1 NGN)
-        if amount_decimal < Decimal('1.00'):
-            return Response(
-                {
-                    'status': 'failed',
-                    'message': 'Minimum transfer amount is 1.00 NGN'
+                    'message': f'Insufficient balance. Available: {sender_wallet.balance} NGN ({int(sender_wallet.balance * 100)} Kobo)'
                 },
                 status=status.HTTP_400_BAD_REQUEST
             )
         
         try:
-            # Perform the transfer
+           
             from django.db import transaction as db_transaction
             
             with db_transaction.atomic():
-                # Update sender balance
-                sender_wallet.balance -= amount_decimal
+               
+                sender_wallet.balance -= Decimal(str(amount_ngn))
                 sender_wallet.save(update_fields=['balance', 'updated_at'])
                 
-                # Update recipient balance
-                recipient_wallet.balance += amount_decimal
+                
+                recipient_wallet.balance += Decimal(str(amount_ngn))
                 recipient_wallet.save(update_fields=['balance', 'updated_at'])
                 
-                # Create transaction record
+                
                 from transactions.models import Transaction
                 transaction = Transaction.objects.create(
                     sender=request.user,
                     recipient=recipient_wallet.user,
-                    amount=amount_decimal,
+                    amount=amount_ngn,
                     transaction_type='transfer',
                     status='success',
                     sender_wallet_number=sender_wallet.wallet_number,
@@ -359,7 +406,8 @@ class WalletTransferView(APIView):
                         'transfer_type': 'wallet_to_wallet',
                         'sender_email': request.user.email,
                         'recipient_email': recipient_wallet.user.email,
-                        'amount_ngn': str(amount_decimal)
+                        'amount_kobo': amount_kobo,
+                        'amount_ngn': str(amount_ngn)
                     }
                 )
                 
@@ -368,12 +416,13 @@ class WalletTransferView(APIView):
                     transaction_id=str(transaction.id),
                     sender=sender_wallet.wallet_number,
                     recipient=recipient_wallet.wallet_number,
-                    amount=str(amount_decimal)
+                    amount_kobo=amount_kobo,
+                    amount_ngn=amount_ngn
                 )
                 
                 response_serializer = TransferResponseSerializer({
                     'status': 'success',
-                    'message': f'Transfer of {amount_decimal} NGN to wallet {wallet_number} completed successfully',
+                    'message': f'Transfer of {amount_kobo} Kobo ({amount_ngn} NGN) to wallet {wallet_number} completed successfully',
                     'transaction_id': transaction.id,
                     'reference': transaction.reference
                 })
@@ -385,7 +434,7 @@ class WalletTransferView(APIView):
                 "Transfer failed",
                 sender=sender_wallet.wallet_number,
                 recipient=recipient_wallet.wallet_number,
-                amount=str(amount_decimal),
+                amount_kobo=amount_kobo,
                 error=str(e)
             )
             
