@@ -53,6 +53,14 @@ class RequireBothJWTAuthAndAPIKeyPermission(permissions.BasePermission):
     Simple permission that requires BOTH JWT AND API Key
     """
     
+    EXCLUDED_PATHS = [
+        r'^/swagger/',
+        r'^/swagger\.(json|yaml)$',
+        r'^/redoc/',
+        r'^/$',
+        r'^/auth/',
+    ]
+    
     def has_permission(self, request, view):
         
         if not request.user.is_authenticated:
