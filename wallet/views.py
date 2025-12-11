@@ -712,8 +712,8 @@ class DepositStatusView(APIView):
     
     Note: This endpoint does not require authentication as it's called by Paystack servers.
     
-    🎯 **Testing Proof**: 
-    1. Check server logs for "🚨 WEBHOOK REQUEST" entries
+     **Testing Proof**: 
+    1. Check server logs for "WEBHOOK REQUEST" entries
     2. Verify transactions update from 'pending' to 'success'
     3. Confirm wallet balances increase
     """,
@@ -757,7 +757,7 @@ class DepositStatusView(APIView):
             required=False
         )
     ],
-    security=[],  # No authentication required
+    security=[],  
     responses={
         200: openapi.Response(
             description="Webhook processed successfully",
@@ -800,26 +800,26 @@ def paystack_webhook(request):
     
     logger.info("")
     logger.info("=" * 80)
-    logger.info(f"🚨 WEBHOOK REQUEST #{request_id} RECEIVED!")
+    logger.info(f"WEBHOOK REQUEST #{request_id} RECEIVED!")
     logger.info("=" * 80)
-    logger.info(f"📅 Time: {timezone.now().isoformat()}")
-    logger.info(f"🌐 URL: {request.build_absolute_uri()}")
-    logger.info(f"🔧 Method: {request.method}")
-    logger.info(f"📦 Content-Type: {request.content_type}")
+    logger.info(f"Time: {timezone.now().isoformat()}")
+    logger.info(f"URL: {request.build_absolute_uri()}")
+    logger.info(f"Method: {request.method}")
+    logger.info(f"Content-Type: {request.content_type}")
     
-    # Log ALL headers
+   
     logger.info("")
     logger.info("📋 REQUEST HEADERS:")
     logger.info("-" * 40)
     for header, value in request.headers.items():
         logger.info(f"  {header}: {value}")
     
-    # Get IP address
+
     x_forwarded_for = request.META.get('HTTP_X_FORWARDED_FOR')
     remote_addr = request.META.get('REMOTE_ADDR')
-    logger.info(f"📍 Client IP (X-Forwarded-For): {x_forwarded_for}")
-    logger.info(f"📍 Client IP (REMOTE_ADDR): {remote_addr}")
-    logger.info(f"👤 User Agent: {request.META.get('HTTP_USER_AGENT', 'Unknown')}")
+    logger.info(f"Client IP (X-Forwarded-For): {x_forwarded_for}")
+    logger.info(f"Client IP (REMOTE_ADDR): {remote_addr}")
+    logger.info(f"User Agent: {request.META.get('HTTP_USER_AGENT', 'Unknown')}")
     # ========== END VERBOSE LOGGING ==========
     
     response_data = {
@@ -829,18 +829,18 @@ def paystack_webhook(request):
         'timestamp': timezone.now().isoformat()
     }
     
-    # Get raw request body
+  
     try:
         raw_body = request.body
         body_str = raw_body.decode('utf-8') if raw_body else ''
         
         logger.info("")
-        logger.info("📄 REQUEST BODY:")
+        logger.info("REQUEST BODY:")
         logger.info("-" * 40)
-        logger.info(f"📏 Length: {len(body_str)} bytes")
+        logger.info(f"Length: {len(body_str)} bytes")
         
         if body_str:
-            # Show first 500 chars
+           
             preview = body_str[:500]
             logger.info(f"👀 Preview (first 500 chars):")
             logger.info(preview)
@@ -851,50 +851,50 @@ def paystack_webhook(request):
             logger.info("Empty body")
             
     except Exception as e:
-        logger.error(f"❌ Failed to read body: {str(e)}")
+        logger.error(f"Failed to read body: {str(e)}")
         response_data['body_error'] = str(e)
         return Response(response_data, status=status.HTTP_200_OK)
     
-    # Check for Paystack signature
+   
     signature = request.headers.get('X-Paystack-Signature', '')
     logger.info("")
-    logger.info(f"🔐 X-Paystack-Signature: {signature}")
-    logger.info(f"📏 Signature length: {len(signature)} chars")
+    logger.info(f"X-Paystack-Signature: {signature}")
+    logger.info(f"Signature length: {len(signature)} chars")
     
     if signature:
         response_data['signature_present'] = True
-        # Show first/last few chars
+      
         if len(signature) > 20:
-            logger.info(f"🔍 Signature (first 20): {signature[:20]}...")
-            logger.info(f"🔍 Signature (last 20): ...{signature[-20:]}")
+            logger.info(f"Signature (first 20): {signature[:20]}...")
+            logger.info(f"Signature (last 20): ...{signature[-20:]}")
     else:
-        logger.warning("⚠️ WARNING: No X-Paystack-Signature header!")
+        logger.warning("WARNING: No X-Paystack-Signature header!")
         response_data['signature_present'] = False
     
-    # Try to parse as JSON
+   
     try:
         if body_str and body_str.strip():
             data = json.loads(body_str)
             
             logger.info("")
-            logger.info("✅ JSON Parsed Successfully!")
+            logger.info("JSON Parsed Successfully!")
             logger.info("-" * 40)
             
-            # Log key fields
+            
             event = data.get('event', 'NO_EVENT')
             reference = data.get('data', {}).get('reference', 'NO_REFERENCE')
             amount = data.get('data', {}).get('amount')
             customer_email = data.get('data', {}).get('customer', {}).get('email')
             
-            logger.info(f"🎯 Event: {event}")
-            logger.info(f"🔖 Reference: {reference}")
-            logger.info(f"💰 Amount: {amount}")
-            logger.info(f"📧 Customer Email: {customer_email}")
+            logger.info(f"Event: {event}")
+            logger.info(f"Reference: {reference}")
+            logger.info(f"Amount: {amount}")
+            logger.info(f"Customer Email: {customer_email}")
             
             response_data['event'] = event
             response_data['reference'] = reference
             
-            # Check if this looks like a real Paystack webhook
+            
             is_likely_paystack = all([
                 'event' in data,
                 'data' in data,
@@ -902,38 +902,35 @@ def paystack_webhook(request):
             ])
             
             if is_likely_paystack:
-                logger.info("✅ This looks like a real Paystack webhook!")
+                logger.info("This looks like a real Paystack webhook!")
                 response_data['source'] = 'paystack'
             else:
-                logger.info("⚠️ This might be a test or malformed webhook")
+                logger.info("This might be a test or malformed webhook")
                 response_data['source'] = 'unknown'
                 
         else:
-            logger.warning("⚠️ Empty or non-JSON body")
+            logger.warning("Empty or non-JSON body")
             response_data['body_type'] = 'empty_or_non_json'
             
     except json.JSONDecodeError as e:
-        logger.error(f"❌ JSON Decode Error: {str(e)}")
+        logger.error(f"JSON Decode Error: {str(e)}")
         response_data['json_error'] = str(e)
-        logger.info(f"📝 Raw body that failed to parse: {body_str[:200]}")
+        logger.info(f"Raw body that failed to parse: {body_str[:200]}")
         return Response(response_data, status=status.HTTP_200_OK)
     except Exception as e:
-        logger.error(f"❌ Error parsing: {str(e)}")
+        logger.error(f"Error parsing: {str(e)}")
         response_data['parse_error'] = str(e)
         return Response(response_data, status=status.HTTP_200_OK)
     
     # ========== PROCESS THE WEBHOOK ==========
     logger.info("")
-    logger.info("⚙️ PROCESSING WEBHOOK...")
+    logger.info("PROCESSING WEBHOOK...")
     
     try:
-        # Your existing processing logic here
-        # But simplified to avoid errors
-        
         if event == 'charge.success':
-            logger.info("💵 Processing charge.success event")
+            logger.info("Processing charge.success event")
             
-            # Try to find transaction
+           
             transaction = None
             if reference:
                 transaction = Transaction.objects.filter(
@@ -944,23 +941,42 @@ def paystack_webhook(request):
                 ).first()
                 
                 if transaction:
-                    logger.info(f"✅ Found transaction: {transaction.id}")
+                
+                    if transaction.status == 'success':
+                        logger.warning(f"⏭Transaction {transaction.id} is already 'success'. Skipping processing to prevent duplicate credit.")
+                        response_data['note'] = 'Transaction already successful, no action taken.'
+                        response_data['transaction_status'] = 'already_success'
+                        response_data['transaction_id'] = str(transaction.id)
+                        
+                      
+                        logger.info("")
+                        logger.info("WEBHOOK PROCESSING COMPLETE (Early Exit - Already Processed)")
+                        logger.info("-" * 40)
+                        logger.info(f"Response: {response_data}")
+                        logger.info("=" * 80)
+                        logger.info("")
+                        
+                        return Response(response_data, status=status.HTTP_200_OK)
+                    
+                    logger.info(f"Found transaction: {transaction.id}")
                     logger.info(f"   Status before: {transaction.status}")
                     logger.info(f"   Amount: {transaction.amount}")
                     
-                    # Update it
+                 
                     transaction.status = 'success'
                     transaction.paid_at = timezone.now()
                     
-                    # Update metadata
+                    
                     if not transaction.metadata:
                         transaction.metadata = {}
                     transaction.metadata['webhook_processed'] = True
                     transaction.metadata['webhook_time'] = timezone.now().isoformat()
+                    transaction.metadata['paystack_event'] = event
+                    transaction.metadata['paystack_data'] = data.get('data', {})
                     
                     transaction.save()
                     
-                    # Credit wallet
+                 
                     if transaction.user:
                         try:
                             wallet = Wallet.objects.get(user=transaction.user)
@@ -968,40 +984,87 @@ def paystack_webhook(request):
                             wallet.balance += transaction.amount
                             wallet.save()
                             
-                            logger.info(f"💰 Wallet credited!")
+                            logger.info(f"Wallet credited!")
                             logger.info(f"   Old balance: {old_balance}")
                             logger.info(f"   New balance: {wallet.balance}")
                             logger.info(f"   User: {transaction.user.email}")
                             
                             response_data['wallet_credited'] = True
                             response_data['new_balance'] = str(wallet.balance)
+                            response_data['transaction_status_updated'] = True
+                            response_data['transaction_id'] = str(transaction.id)
                             
                         except Wallet.DoesNotExist:
-                            logger.error(f"❌ Wallet not found for user {transaction.user.id}")
+                            logger.error(f"Wallet not found for user {transaction.user.id}")
                             response_data['wallet_error'] = 'not_found'
                     else:
-                        logger.warning("⚠️ Transaction has no user associated")
+                        logger.warning("Transaction has no user associated")
+                        response_data['user_error'] = 'no_user'
                         
                 else:
-                    logger.warning(f"⚠️ No transaction found for reference: {reference}")
+                    logger.warning(f"No transaction found for reference: {reference}")
                     response_data['transaction_found'] = False
                     
         elif event == 'charge.failed':
-            logger.info("❌ Processing charge.failed event")
-            # Similar logic for failed charges
+            logger.info("Processing charge.failed event")
+            
+          
+            transaction = None
+            if reference:
+                transaction = Transaction.objects.filter(
+                    Q(paystack_reference=reference) | 
+                    Q(metadata__paystack_reference=reference) |
+                    Q(reference=reference),
+                    transaction_type='deposit'
+                ).first()
+                
+                if transaction:
+                   
+                    if transaction.status == 'failed':
+                        logger.warning(f"⏭Transaction {transaction.id} is already 'failed'. Skipping processing.")
+                        response_data['note'] = 'Transaction already marked as failed.'
+                    else:
+                        logger.info(f"Found transaction: {transaction.id}")
+                        logger.info(f"   Status before: {transaction.status}")
+                        
+                     
+                        transaction.status = 'failed'
+                        
+                     
+                        if not transaction.metadata:
+                            transaction.metadata = {}
+                        transaction.metadata['webhook_processed'] = True
+                        transaction.metadata['webhook_time'] = timezone.now().isoformat()
+                        transaction.metadata['paystack_event'] = event
+                        transaction.metadata['paystack_data'] = data.get('data', {})
+                        
+                        transaction.save()
+                        
+                        logger.info(f"Transaction marked as failed")
+                        response_data['transaction_status_updated'] = True
+                        response_data['new_status'] = 'failed'
+                        response_data['transaction_id'] = str(transaction.id)
+                else:
+                    logger.warning(f"No transaction found for reference: {reference}")
+                    response_data['transaction_found'] = False
+                    
+        elif event in ['transfer.success', 'transfer.failed']:
+            logger.info(f"ℹTransfer event '{event}' received but not processed in this webhook")
+            response_data['event_type'] = 'transfer_not_processed'
             
         else:
-            logger.info(f"ℹ️ Event '{event}' not processed")
+            logger.info(f"Event '{event}' not processed")
+            response_data['event_processed'] = False
             
     except Exception as e:
-        logger.error(f"❌ Error in processing: {str(e)}", exc_info=True)
+        logger.error(f"Error in processing: {str(e)}", exc_info=True)
         response_data['processing_error'] = str(e)
     
     # ========== FINAL RESPONSE ==========
     logger.info("")
-    logger.info("✅ WEBHOOK PROCESSING COMPLETE")
+    logger.info("WEBHOOK PROCESSING COMPLETE")
     logger.info("-" * 40)
-    logger.info(f"📤 Response: {response_data}")
+    logger.info(f"Response: {response_data}")
     logger.info("=" * 80)
     logger.info("")
     
