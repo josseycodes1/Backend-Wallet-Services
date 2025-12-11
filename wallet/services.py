@@ -6,6 +6,7 @@ from django.utils import timezone
 from paystackapi.transaction import Transaction as PaystackTransaction
 from paystackapi.paystack import Paystack
 import structlog
+from .models import Transaction
 
 logger = structlog.get_logger(__name__)
 
@@ -16,10 +17,10 @@ class PaystackService:
     def initialize_transaction(email, amount_kobo, reference=None):
         """Initialize Paystack transaction - amount should be in Kobo"""
         try:
-            # Convert to integer to ensure it's in Kobo
+           
             amount_in_kobo = int(amount_kobo)
             
-            # Validate minimum amount (100 Kobo = 1 NGN)
+      
             if amount_in_kobo < 100:
                 logger.error(
                     "Amount below minimum",
@@ -92,7 +93,7 @@ class PaystackService:
     def initialize_transaction_ngn(email, amount_ngn, reference=None):
         """Alternative method that accepts amount in NGN for backward compatibility"""
         try:
-            # Convert NGN to Kobo
+            
             amount_kobo = int(float(amount_ngn) * 100)
             return PaystackService.initialize_transaction(email, amount_kobo, reference)
         except Exception as e:
@@ -154,12 +155,11 @@ class PaystackService:
     def verify_webhook_signature(payload, signature):
         """Verify Paystack webhook signature"""
         try:
-            # Use PAYSTACK_SECRET_KEY if PAYSTACK_WEBHOOK_SECRET is not set
+         
             secret_key = getattr(settings, 'PAYSTACK_WEBHOOK_SECRET', settings.PAYSTACK_SECRET_KEY)
             secret = secret_key.encode('utf-8')
             
-            # Paystack expects the raw request body, not the parsed JSON
-            # If payload is already a dict, convert it back to JSON string
+          
             if isinstance(payload, dict):
                 payload_str = json.dumps(payload, separators=(',', ':'))
             else:
@@ -187,10 +187,10 @@ class WalletTransferService:
     @staticmethod
     def transfer_funds(sender_wallet, recipient_wallet, amount, description=""):
         """Transfer funds between wallets - amount should be in NGN"""
-        from transactions.models import Transaction
+    
         
         try:
-            # Validate transfer
+          
             can_transfer, message = sender_wallet.can_transfer(amount)
             if not can_transfer:
                 logger.warning(
@@ -202,7 +202,7 @@ class WalletTransferService:
                 )
                 return False, message, None
             
-            # Create transaction record
+          
             transaction = Transaction.objects.create(
                 sender=sender_wallet.user,
                 recipient=recipient_wallet.user,
@@ -212,22 +212,22 @@ class WalletTransferService:
                 description=description
             )
             
-            # Perform the transfer atomically
+          
             from django.db import transaction as db_transaction
             
             with db_transaction.atomic():
-                # Deduct from sender
+               
                 sender_wallet.balance -= amount
                 sender_wallet.save(update_fields=['balance', 'updated_at'])
                 
-                # Add to recipient
+             
                 recipient_wallet.balance += amount
                 recipient_wallet.save(update_fields=['balance', 'updated_at'])
                 
-                # Update daily spent
+              
                 sender_wallet.update_daily_spent(amount)
                 
-                # Update transaction status
+                
                 transaction.status = 'success'
                 transaction.save(update_fields=['status', 'updated_at'])
                 
