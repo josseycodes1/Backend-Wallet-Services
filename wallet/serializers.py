@@ -128,3 +128,44 @@ class WalletNumberSerializer(serializers.Serializer):
         if not Wallet.objects.filter(wallet_number=value, status='active').exists():
             raise serializers.ValidationError("Invalid wallet number")
         return value
+
+class TransactionHistoryItemSerializer(serializers.Serializer):
+    """Serializer for transaction history items"""
+    type = serializers.CharField(max_length=20)
+    amount = serializers.DecimalField(max_digits=20, decimal_places=2)
+    status = serializers.CharField(max_length=20)
+    created_at = serializers.DateTimeField()
+    direction = serializers.CharField(max_length=20)
+    counterparty_wallet = serializers.CharField(max_length=15, allow_null=True)
+    reference = serializers.CharField(max_length=100)
+    description = serializers.CharField(max_length=255, allow_null=True, allow_blank=True)
+    
+    def create(self, validated_data):
+        pass
+    
+    def update(self, instance, validated_data):
+        pass
+
+
+class TransactionFilterSerializer(serializers.Serializer):
+    """Serializer for transaction filtering"""
+    transaction_type = serializers.ChoiceField(
+        choices=['deposit', 'transfer', 'withdrawal', 'refund', 'all'],
+        default='all',
+        required=False
+    )
+    status = serializers.ChoiceField(
+        choices=['pending', 'success', 'failed', 'cancelled', 'reversed', 'abandoned', 'all'],
+        default='all',
+        required=False
+    )
+    start_date = serializers.DateField(required=False)
+    end_date = serializers.DateField(required=False)
+    limit = serializers.IntegerField(min_value=1, max_value=100, default=20, required=False)
+    offset = serializers.IntegerField(min_value=0, default=0, required=False)
+    
+    def validate(self, attrs):
+        if attrs.get('start_date') and attrs.get('end_date'):
+            if attrs['start_date'] > attrs['end_date']:
+                raise serializers.ValidationError("start_date cannot be after end_date")
+        return attrs

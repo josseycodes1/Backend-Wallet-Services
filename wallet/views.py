@@ -11,8 +11,10 @@ from datetime import timedelta
 from decimal import Decimal
 import json
 from django.utils import timezone 
+from django.db import models 
 
-from .models import Wallet, Transaction  # IMPORT TRANSACTION HERE
+from .models import Wallet, Transaction 
+
 from .serializers import (
     WalletSerializer,
     DepositResponseSerializer,
@@ -20,7 +22,9 @@ from .serializers import (
     TransferResponseSerializer,
     BalanceResponseSerializer,
     WalletNumberSerializer,
-    DepositRequestKoboSerializer
+    DepositRequestKoboSerializer,
+    TransactionHistoryItemSerializer,  
+    TransactionFilterSerializer  
 )
 from .services import PaystackService, WalletTransferService
 from api_keys.permissions import HasPermission, RequireBothJWTAuthAndAPIKeyPermission
@@ -74,14 +78,14 @@ class WalletDepositView(APIView):
             )
         
         try:
-            # GET WALLET (NO LONGER CREATE IT HERE)
+           
             wallet = Wallet.objects.get(user=request.user)
             
             reference = f"DEP_{request.user.id}_{int(timezone.now().timestamp())}"
             
             time_threshold = timezone.now() - timedelta(minutes=10)
             
-            # FIXED: Use Transaction from .models
+           
             existing_transaction = Transaction.objects.filter(
                 user=request.user,
                 amount=amount_ngn,
@@ -247,7 +251,7 @@ class WalletTransferView(APIView):
         security=[{'Bearer': []}]
     )
     def post(self, request):
-        # Create a serializer that accepts amount in Kobo
+      
         class TransferKoboRequestSerializer(serializers.Serializer):
             wallet_number = serializers.CharField(
                 max_length=15,
@@ -303,11 +307,11 @@ class WalletTransferView(APIView):
         amount_kobo = serializer.validated_data['amount']
         description = serializer.validated_data.get('description', '')
         
-        # Convert Kobo to NGN for database
+        
         amount_ngn = amount_kobo / 100
         
         try:
-            # GET SENDER WALLET (NO LONGER CREATED HERE - MUST EXIST FROM AUTHENTICATION)
+           
             sender_wallet = Wallet.objects.get(user=request.user)
         except Wallet.DoesNotExist:
             return Response(
@@ -318,7 +322,7 @@ class WalletTransferView(APIView):
                 status=status.HTTP_404_NOT_FOUND
             )
         
-        # Check if sender wallet is active and not locked
+    
         if sender_wallet.status != 'active' or sender_wallet.is_locked:
             return Response(
                 {
@@ -328,7 +332,7 @@ class WalletTransferView(APIView):
                 status=status.HTTP_400_BAD_REQUEST
             )
         
-        # Check if recipient exists (using serializer context)
+       
         recipient_wallet = serializer.context.get('recipient_wallet')
         if not recipient_wallet:
             return Response(
@@ -339,7 +343,7 @@ class WalletTransferView(APIView):
                 status=status.HTTP_404_NOT_FOUND
             )
         
-        # Check if trying to transfer to self
+   
         if sender_wallet.wallet_number == recipient_wallet.wallet_number:
             return Response(
                 {
@@ -349,7 +353,7 @@ class WalletTransferView(APIView):
                 status=status.HTTP_400_BAD_REQUEST
             )
         
-        # Check sender has sufficient balance (in NGN)
+      
         if sender_wallet.balance < Decimal(str(amount_ngn)):
             return Response(
                 {
@@ -359,7 +363,7 @@ class WalletTransferView(APIView):
                 status=status.HTTP_400_BAD_REQUEST
             )
         
-        # Check daily transfer limit
+        
         if sender_wallet.daily_limit and (sender_wallet.daily_spent + Decimal(str(amount_ngn))) > sender_wallet.daily_limit:
             return Response(
                 {
@@ -370,22 +374,22 @@ class WalletTransferView(APIView):
             )
         
         try:
-            # Perform the transfer
+         
             from django.db import transaction as db_transaction
             
             with db_transaction.atomic():
-                # Update sender balance
+               
                 sender_wallet.balance -= Decimal(str(amount_ngn))
                 
-                # Update sender daily spent
+             
                 sender_wallet.daily_spent += Decimal(str(amount_ngn))
                 sender_wallet.save(update_fields=['balance', 'daily_spent', 'updated_at'])
                 
-                # Update recipient balance
+               
                 recipient_wallet.balance += Decimal(str(amount_ngn))
                 recipient_wallet.save(update_fields=['balance', 'updated_at'])
                 
-                # Create transaction record - USE LOCAL TRANSACTION MODEL
+                
                 transaction = Transaction.objects.create(
                     sender=request.user,
                     recipient=recipient_wallet.user,
@@ -556,7 +560,7 @@ class DepositStatusView(APIView):
         refresh = request.GET.get('refresh', 'false').lower() == 'true'
         
         try:
-            # FIXED: Use Transaction from .models
+            
             transaction = Transaction.objects.get(
                 reference=reference,
                 user=request.user,
@@ -722,7 +726,7 @@ def paystack_webhook(request):
         result = PaystackService.verify_transaction(reference)
         
         if result['success'] and result['status'] == 'success':
-            # FIXED: Use Transaction from .models
+           
             try:
                 transaction = Transaction.objects.get(
                     reference=reference,
@@ -761,7 +765,7 @@ def paystack_webhook(request):
     elif event in ['charge.failed', 'transfer.failed']:
         reference = data.get('reference')
         
-        # FIXED: Use Transaction from .models
+     
         try:
             transaction = Transaction.objects.filter(
                 reference=reference,
@@ -782,3 +786,163 @@ def paystack_webhook(request):
             )
     
     return Response({'status': True}, status=status.HTTP_200_OK)
+
+class WalletTransactionsView(APIView):
+    """Get transaction history for authenticated user"""
+    permission_classes = [RequireBothJWTAuthAndAPIKeyPermission]
+    
+    @swagger_auto_schema(
+        operation_description="Get transaction history for the authenticated user's wallet with filtering options",
+        query_serializer=TransactionFilterSerializer,
+        responses={
+            200: openapi.Response(
+                description="Transaction history retrieved successfully",
+                schema=openapi.Schema(
+                    type=openapi.TYPE_OBJECT,
+                    properties={
+                        'transactions': openapi.Schema(
+                            type=openapi.TYPE_ARRAY,
+                            items=openapi.Schema(
+                                type=openapi.TYPE_OBJECT,
+                                properties={
+                                    'type': openapi.Schema(type=openapi.TYPE_STRING),
+                                    'amount': openapi.Schema(type=openapi.TYPE_NUMBER),
+                                    'status': openapi.Schema(type=openapi.TYPE_STRING),
+                                    'created_at': openapi.Schema(type=openapi.TYPE_STRING, format='date-time'),
+                                    'direction': openapi.Schema(type=openapi.TYPE_STRING),
+                                    'counterparty_wallet': openapi.Schema(type=openapi.TYPE_STRING, nullable=True),
+                                    'reference': openapi.Schema(type=openapi.TYPE_STRING),
+                                    'description': openapi.Schema(type=openapi.TYPE_STRING, nullable=True),
+                                    'transaction_id': openapi.Schema(type=openapi.TYPE_STRING, format='uuid')
+                                }
+                            )
+                        ),
+                        'pagination': openapi.Schema(
+                            type=openapi.TYPE_OBJECT,
+                            properties={
+                                'total': openapi.Schema(type=openapi.TYPE_INTEGER),
+                                'limit': openapi.Schema(type=openapi.TYPE_INTEGER),
+                                'offset': openapi.Schema(type=openapi.TYPE_INTEGER),
+                                'has_more': openapi.Schema(type=openapi.TYPE_BOOLEAN)
+                            }
+                        )
+                    }
+                )
+            ),
+            404: "Wallet not found",
+            400: "Bad Request"
+        },
+        security=[{'Bearer': []}, {'APIKey': []}]
+    )
+    def get(self, request):
+        
+        filter_serializer = TransactionFilterSerializer(data=request.query_params)
+        if not filter_serializer.is_valid():
+            return Response(
+                filter_serializer.errors,
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        filters_data = filter_serializer.validated_data
+        
+        try:
+            
+            wallet = Wallet.objects.get(user=request.user)
+        except Wallet.DoesNotExist:
+            return Response(
+                {
+                    'error': 'Wallet not found',
+                    'message': 'You need to authenticate first to create a wallet.',
+                    'solution': 'Authenticate via Google OAuth to automatically create a wallet.'
+                },
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        
+        queryset = Transaction.objects.filter(
+            models.Q(user=request.user) |  
+            models.Q(sender=request.user) |  
+            models.Q(recipient=request.user)  
+        ).distinct()
+        
+       
+        if filters_data['transaction_type'] != 'all':
+            queryset = queryset.filter(transaction_type=filters_data['transaction_type'])
+        
+        if filters_data['status'] != 'all':
+            queryset = queryset.filter(status=filters_data['status'])
+        
+        if filters_data.get('start_date'):
+            queryset = queryset.filter(created_at__date__gte=filters_data['start_date'])
+        
+        if filters_data.get('end_date'):
+            queryset = queryset.filter(created_at__date__lte=filters_data['end_date'])
+        
+       
+        limit = filters_data['limit']
+        offset = filters_data['offset']
+        
+        total_count = queryset.count()
+        has_more = (offset + limit) < total_count
+        
+        transactions = queryset.order_by('-created_at')[offset:offset + limit]
+        
+       
+        transactions_list = []
+        for transaction in transactions:
+           
+            transaction_type = transaction.transaction_type
+            direction = ""
+            counterparty_wallet = None
+            
+            if transaction_type == 'deposit':
+                direction = "in"
+                counterparty_wallet = None
+            elif transaction_type == 'transfer':
+                if request.user == transaction.sender:
+                    direction = "out"
+                    counterparty_wallet = transaction.recipient_wallet_number
+                elif request.user == transaction.recipient:
+                    direction = "in"
+                    counterparty_wallet = transaction.sender_wallet_number
+            elif transaction_type == 'withdrawal':
+                direction = "out"
+                counterparty_wallet = None
+            elif transaction_type == 'refund':
+                direction = "in"
+                counterparty_wallet = None
+            
+            transaction_data = {
+                'type': transaction_type,
+                'amount': float(transaction.amount),
+                'status': transaction.status,
+                'created_at': transaction.created_at.isoformat(),
+                'direction': direction,
+                'counterparty_wallet': counterparty_wallet,
+                'reference': transaction.reference,
+                'description': transaction.description,
+                'transaction_id': str(transaction.id)
+            }
+            
+            transactions_list.append(transaction_data)
+        
+        logger.info(
+            "Transaction history retrieved",
+            user_id=str(request.user.id),
+            wallet_id=str(wallet.id),
+            wallet_number=wallet.wallet_number,
+            total_count=total_count,
+            returned_count=len(transactions_list)
+        )
+        
+        response_data = {
+            'transactions': transactions_list,
+            'pagination': {
+                'total': total_count,
+                'limit': limit,
+                'offset': offset,
+                'has_more': has_more
+            }
+        }
+        
+        return Response(response_data, status=status.HTTP_200_OK)
