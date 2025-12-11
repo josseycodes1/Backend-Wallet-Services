@@ -704,88 +704,180 @@ class DepositStatusView(APIView):
 @permission_classes([permissions.AllowAny])
 def paystack_webhook(request):
     """Handle Paystack webhook notifications"""
-    signature = request.headers.get('X-Paystack-Signature', '')
-    payload = request.data
+    import json
     
-    if not PaystackService.verify_webhook_signature(payload, signature):
-        logger.warning("Invalid webhook signature", signature=signature)
+    # Get the raw request body for signature verification
+    payload = request.body.decode('utf-8')
+    
+    # Verify Paystack signature
+    signature = request.headers.get('X-Paystack-Signature', '')
+    
+    if not signature:
+        logger.warning("Missing Paystack signature in webhook")
         return Response({'status': False}, status=status.HTTP_401_UNAUTHORIZED)
     
-    event = payload.get('event')
-    data = payload.get('data', {})
+    # Verify the signature
+    if not PaystackService.verify_webhook_signature(payload, signature):
+        logger.warning("Invalid webhook signature", signature=signature[:20] + "...")
+        return Response({'status': False}, status=status.HTTP_401_UNAUTHORIZED)
+    
+    # Parse JSON payload
+    try:
+        data = json.loads(payload)
+    except json.JSONDecodeError as e:
+        logger.error("Invalid JSON in webhook payload", error=str(e))
+        return Response({'status': False, 'error': 'Invalid JSON'}, status=status.HTTP_400_BAD_REQUEST)
+    
+    event = data.get('event')
+    payload_data = data.get('data', {})
     
     logger.info(
         "Webhook received",
         event=event,
-        reference=data.get('reference')
+        reference=payload_data.get('reference'),
+        amount=payload_data.get('amount'),
+        status=payload_data.get('status')
     )
     
-    if event == 'charge.success':
-        reference = data.get('reference')
-        
-        result = PaystackService.verify_transaction(reference)
-        
-        if result['success'] and result['status'] == 'success':
-           
+    try:
+        if event == 'charge.success':
+            reference = payload_data.get('reference')
+            
+            if not reference:
+                logger.error("Missing reference in charge.success webhook")
+                return Response({'status': False, 'error': 'Missing reference'}, status=status.HTTP_400_BAD_REQUEST)
+            
+            # Additional verification from Paystack
+            result = PaystackService.verify_transaction(reference)
+            
+            if not result.get('success'):
+                logger.error("Paystack verification failed", reference=reference, error=result.get('message'))
+                return Response({'status': False, 'error': 'Verification failed'}, status=status.HTTP_400_BAD_REQUEST)
+            
+            if result.get('status') != 'success':
+                logger.warning("Transaction not successful according to Paystack", 
+                            reference=reference, 
+                            status=result.get('status'))
+                return Response({'status': False, 'error': 'Transaction not successful'}, status=status.HTTP_400_BAD_REQUEST)
+            
             try:
-                transaction = Transaction.objects.get(
-                    reference=reference,
+                # Find the transaction by paystack_reference in metadata
+                transaction = Transaction.objects.filter(
+                    metadata__paystack_reference=reference,
                     transaction_type='deposit',
                     status='pending'
-                )
+                ).first()
                 
+                if not transaction:
+                    # Try to find by reference field
+                    transaction = Transaction.objects.filter(
+                        reference=reference,
+                        transaction_type='deposit',
+                        status='pending'
+                    ).first()
+                
+                if not transaction:
+                    logger.error("Transaction not found for successful charge", reference=reference)
+                    return Response({'status': False, 'error': 'Transaction not found'}, status=status.HTTP_404_NOT_FOUND)
+                
+                # Update transaction status
                 transaction.status = 'success'
-                transaction.metadata['paystack_data'] = data
-                transaction.save(update_fields=['status', 'metadata', 'updated_at'])
+                transaction.metadata['paystack_webhook_data'] = data
+                transaction.metadata['paystack_verification'] = result
+                transaction.metadata['webhook_processed_at'] = timezone.now().isoformat()
                 
-                wallet = Wallet.objects.get(user=transaction.user)
-                wallet.balance += transaction.amount
-                wallet.save(update_fields=['balance', 'updated_at'])
+                # Add paid_at if available
+                paid_at_str = result.get('data', {}).get('paid_at')
+                if paid_at_str:
+                    try:
+                        from django.utils.dateparse import parse_datetime
+                        paid_at = parse_datetime(paid_at_str)
+                        if paid_at:
+                            transaction.paid_at = paid_at
+                    except (ValueError, TypeError):
+                        transaction.paid_at = timezone.now()
+                else:
+                    transaction.paid_at = timezone.now()
                 
-                logger.info(
-                    "Wallet credited via webhook",
-                    reference=reference,
-                    user_id=str(transaction.user.id),
-                    amount=str(transaction.amount),
-                    new_balance=str(wallet.balance)
-                )
+                transaction.save(update_fields=['status', 'metadata', 'paid_at', 'updated_at'])
                 
-            except Transaction.DoesNotExist:
-                logger.error(
-                    "Transaction not found in database",
-                    reference=reference
-                )
-            except Wallet.DoesNotExist:
-                logger.error(
-                    "Wallet not found for transaction",
-                    reference=reference,
-                    user_id=str(transaction.user.id)
-                )
-    
-    elif event in ['charge.failed', 'transfer.failed']:
-        reference = data.get('reference')
+                # Credit the user's wallet
+                try:
+                    wallet = Wallet.objects.get(user=transaction.user)
+                    wallet.balance += transaction.amount
+                    wallet.save(update_fields=['balance', 'updated_at'])
+                    
+                    logger.info(
+                        "Wallet credited via webhook",
+                        reference=reference,
+                        user_id=str(transaction.user.id),
+                        user_email=transaction.user.email,
+                        amount=str(transaction.amount),
+                        new_balance=str(wallet.balance)
+                    )
+                    
+                except Wallet.DoesNotExist:
+                    logger.error(
+                        "Wallet not found for transaction",
+                        reference=reference,
+                        user_id=str(transaction.user.id)
+                    )
+                    # Still return success to Paystack to avoid retries
+                    return Response({'status': True}, status=status.HTTP_200_OK)
+                
+            except Exception as e:
+                logger.error("Error processing successful charge", reference=reference, error=str(e), exc_info=True)
+                return Response({'status': False, 'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
         
-     
-        try:
-            transaction = Transaction.objects.filter(
-                reference=reference,
-                status='pending'
-            ).update(status='failed')
+        elif event == 'charge.failed':
+            reference = payload_data.get('reference')
             
-            logger.info(
-                "Transaction marked as failed via webhook",
-                reference=reference,
-                event=event
-            )
-            
-        except Exception as e:
-            logger.error(
-                "Failed to update transaction status",
-                reference=reference,
-                error=str(e)
-            )
-    
-    return Response({'status': True}, status=status.HTTP_200_OK)
+            if reference:
+                try:
+                    # Find and update the transaction
+                    transaction = Transaction.objects.filter(
+                        models.Q(metadata__paystack_reference=reference) | 
+                        models.Q(reference=reference),
+                        transaction_type='deposit',
+                        status='pending'
+                    ).first()
+                    
+                    if transaction:
+                        transaction.status = 'failed'
+                        transaction.metadata['paystack_webhook_data'] = data
+                        transaction.metadata['webhook_processed_at'] = timezone.now().isoformat()
+                        transaction.metadata['failure_reason'] = payload_data.get('gateway_response', 'Payment failed')
+                        transaction.save(update_fields=['status', 'metadata', 'updated_at'])
+                        
+                        logger.info(
+                            "Transaction marked as failed via webhook",
+                            reference=reference,
+                            event=event,
+                            failure_reason=payload_data.get('gateway_response')
+                        )
+                    
+                except Exception as e:
+                    logger.error("Error processing failed charge", reference=reference, error=str(e))
+        
+        elif event == 'transfer.success':
+            # Handle successful transfers if you implement Paystack transfers
+            reference = payload_data.get('reference')
+            logger.info("Transfer success webhook received", reference=reference)
+        
+        elif event == 'transfer.failed':
+            reference = payload_data.get('reference')
+            logger.info("Transfer failed webhook received", reference=reference)
+        
+        else:
+            logger.info("Unhandled webhook event received", event=event)
+        
+        # Always return success to Paystack to acknowledge receipt
+        return Response({'status': True}, status=status.HTTP_200_OK)
+        
+    except Exception as e:
+        logger.error("Unexpected error in webhook handler", error=str(e), exc_info=True)
+        # Still return success to prevent Paystack from retrying too much
+        return Response({'status': True}, status=status.HTTP_200_OK)
 
 class WalletTransactionsView(APIView):
     """Get transaction history for authenticated user"""
