@@ -702,11 +702,52 @@ class DepositStatusView(APIView):
             )
 
 
+PAYSTACK_WEBHOOK_SCHEMA = openapi.Schema(
+    type=openapi.TYPE_OBJECT,
+    required=['event', 'data'],
+    properties={
+        'event': openapi.Schema(
+            type=openapi.TYPE_STRING,
+            description='Webhook event type',
+            enum=['charge.success', 'charge.failed', 'transfer.success', 'transfer.failed']
+        ),
+        'data': openapi.Schema(
+            type=openapi.TYPE_OBJECT,
+            description='Event data payload',
+            properties={
+                'id': openapi.Schema(type=openapi.TYPE_INTEGER),
+                'reference': openapi.Schema(type=openapi.TYPE_STRING),
+                'amount': openapi.Schema(type=openapi.TYPE_INTEGER),
+                'currency': openapi.Schema(type=openapi.TYPE_STRING),
+                'status': openapi.Schema(type=openapi.TYPE_STRING),
+                'paid_at': openapi.Schema(type=openapi.TYPE_STRING, format='date-time'),
+                'gateway_response': openapi.Schema(type=openapi.TYPE_STRING),
+                'customer': openapi.Schema(
+                    type=openapi.TYPE_OBJECT,
+                    properties={
+                        'email': openapi.Schema(type=openapi.TYPE_STRING),
+                        'id': openapi.Schema(type=openapi.TYPE_INTEGER)
+                    }
+                )
+            }
+        )
+    }
+)
+
 @swagger_auto_schema(
     method='post',
     operation_description="Handle Paystack webhook notifications",
-    # Tell Swagger not to add authentication for this endpoint
-    security=[],
+    request_body=PAYSTACK_WEBHOOK_SCHEMA,  # ← ADD THIS LINE
+    manual_parameters=[
+        openapi.Parameter(
+            'X-Paystack-Signature',
+            openapi.IN_HEADER,
+            description="Paystack webhook signature for verification",
+            type=openapi.TYPE_STRING,
+            required=True
+        )
+    ],
+    security=[],  # No authentication required
     responses={
         200: openapi.Response(
             description="Webhook processed successfully",
