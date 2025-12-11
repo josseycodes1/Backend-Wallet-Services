@@ -59,6 +59,7 @@ class RequireBothJWTAuthAndAPIKeyPermission(permissions.BasePermission):
         r'^/redoc/',
         r'^/$',
         r'^/auth/',
+        r'^/wallet/paystack/webhook/',
     ]
     
     def has_permission(self, request, view):

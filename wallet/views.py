@@ -26,6 +26,7 @@ from .serializers import (
     TransactionHistoryItemSerializer,  
     TransactionFilterSerializer  
 )
+from drf_yasg.utils import swagger_auto_schema
 from .services import PaystackService, WalletTransferService
 from api_keys.permissions import HasPermission, RequireBothJWTAuthAndAPIKeyPermission
 from rest_framework import serializers
@@ -700,6 +701,34 @@ class DepositStatusView(APIView):
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 
+
+@swagger_auto_schema(
+    method='post',
+    operation_description="Handle Paystack webhook notifications",
+    # Tell Swagger not to add authentication for this endpoint
+    security=[],
+    responses={
+        200: openapi.Response(
+            description="Webhook processed successfully",
+            schema=openapi.Schema(
+                type=openapi.TYPE_OBJECT,
+                properties={
+                    'status': openapi.Schema(type=openapi.TYPE_BOOLEAN)
+                }
+            )
+        ),
+        401: openapi.Response(
+            description="Invalid signature",
+            schema=openapi.Schema(
+                type=openapi.TYPE_OBJECT,
+                properties={
+                    'status': openapi.Schema(type=openapi.TYPE_BOOLEAN),
+                    'error': openapi.Schema(type=openapi.TYPE_STRING)
+                }
+            )
+        )
+    }
+)
 @api_view(['POST'])
 @permission_classes([permissions.AllowAny])
 def paystack_webhook(request):
