@@ -104,7 +104,6 @@ class GoogleAuthCallbackView(APIView):
         error = request.GET.get('error')
         error_description = request.GET.get('error_description')
         
-        
         if error:
             logger.warning(
                 "Google OAuth error returned",
@@ -119,7 +118,6 @@ class GoogleAuthCallbackView(APIView):
                 status=status.HTTP_400_BAD_REQUEST
             )
         
-       
         if not code:
             logger.warning("No authorization code provided in callback")
             return Response(
@@ -131,7 +129,6 @@ class GoogleAuthCallbackView(APIView):
             )
         
         try:
-            
             token_url = "https://oauth2.googleapis.com/token"
             token_data = {
                 'code': code,
@@ -142,7 +139,6 @@ class GoogleAuthCallbackView(APIView):
             }
             
             token_response = requests.post(token_url, data=token_data)
-            
             
             if token_response.status_code != 200:
                 error_data = token_response.json()
@@ -163,11 +159,9 @@ class GoogleAuthCallbackView(APIView):
             token_json = token_response.json()
             access_token = token_json.get('access_token')
             
-            
             user_info_url = "https://www.googleapis.com/oauth2/v2/userinfo"
             headers = {'Authorization': f'Bearer {access_token}'}
             user_info_response = requests.get(user_info_url, headers=headers)
-            
             
             if user_info_response.status_code != 200:
                 logger.warning(
@@ -184,7 +178,6 @@ class GoogleAuthCallbackView(APIView):
             
             user_info = user_info_response.json()
             
-           
             email = user_info.get('email')
             google_id = user_info.get('id')
             first_name = user_info.get('given_name', '')
@@ -203,7 +196,6 @@ class GoogleAuthCallbackView(APIView):
                 }
             )
             
-            
             if not created:
                 user.google_id = google_id
                 user.google_picture = picture
@@ -212,20 +204,44 @@ class GoogleAuthCallbackView(APIView):
                 user.is_verified = True
                 user.save()
             
-           
+            # CREATE WALLET FOR USER (NEW CODE)
+            from wallet.models import Wallet
+            wallet, wallet_created = Wallet.objects.get_or_create(
+                user=user,
+                defaults={
+                    'currency': 'NGN',
+                    'status': 'active'
+                }
+            )
+            
+            if wallet_created:
+                logger.info(
+                    "Wallet created for user during authentication",
+                    user_id=str(user.id),
+                    wallet_id=str(wallet.id),
+                    wallet_number=wallet.wallet_number
+                )
+            
             refresh = RefreshToken.for_user(user)
+            
+            # Include wallet details in response
+            from wallet.serializers import WalletSerializer
+            wallet_data = WalletSerializer(wallet).data
             
             serializer = TokenResponseSerializer({
                 'access': str(refresh.access_token),
                 'refresh': str(refresh),
-                'user': UserSerializer(user).data
+                'user': UserSerializer(user).data,
+                'wallet': wallet_data  # Add wallet to response
             })
             
             logger.info(
-                "Google auth successful",
+                "Google auth successful with wallet",
                 email=email,
                 created=created,
-                user_id=str(user.id)
+                user_id=str(user.id),
+                wallet_id=str(wallet.id),
+                wallet_number=wallet.wallet_number
             )
             
             return Response(serializer.data, status=status.HTTP_200_OK)

@@ -54,7 +54,6 @@ INSTALLED_APPS = [
     # Local apps
     'users',
     'wallet',
-    'transactions',
     'api_keys',
 ]
 

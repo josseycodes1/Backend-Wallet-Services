@@ -56,9 +56,6 @@ urlpatterns = [
     
     path('wallet/', include('wallet.urls')),
     
-   
-    path('wallet/transactions/', include('transactions.urls')),
-    
 
     path('keys/', include('api_keys.urls')),
 ]

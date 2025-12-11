@@ -12,7 +12,7 @@ from decimal import Decimal
 import json
 from django.utils import timezone 
 
-from .models import Wallet
+from .models import Wallet, Transaction  # IMPORT TRANSACTION HERE
 from .serializers import (
     WalletSerializer,
     DepositResponseSerializer,
@@ -24,51 +24,9 @@ from .serializers import (
 )
 from .services import PaystackService, WalletTransferService
 from api_keys.permissions import HasPermission, RequireBothJWTAuthAndAPIKeyPermission
-from rest_framework import serializers, status
+from rest_framework import serializers
 
 logger = structlog.get_logger(__name__)
-
-
-class CreateWalletView(APIView):
-    """Create a wallet for authenticated user"""
-    permission_classes = [RequireBothJWTAuthAndAPIKeyPermission]
-   
-    
-    @swagger_auto_schema(
-        operation_description="Create a wallet for the authenticated user",
-        responses={
-            201: WalletSerializer,
-            400: "Wallet already exists"
-        },
-        security=[{'Bearer': []}, {'APIKey': []}]
-    )
-    def post(self, request):
-        
-        if hasattr(request.user, 'wallet'):
-            return Response(
-                {
-                    'error': 'Wallet already exists',
-                    'wallet_number': request.user.wallet.wallet_number,
-                    'balance': request.user.wallet.balance
-                },
-                status=status.HTTP_400_BAD_REQUEST
-            )
-        
-       
-        wallet = Wallet.objects.create(
-            user=request.user,
-            currency='NGN'
-        )
-        
-        serializer = WalletSerializer(wallet)
-        
-        logger.info(
-            "Wallet created via endpoint",
-            user_id=str(request.user.id),
-            wallet_number=wallet.wallet_number
-        )
-        
-        return Response(serializer.data, status=status.HTTP_201_CREATED)
 
 class WalletDepositView(APIView):
     """Initialize wallet deposit with Paystack"""
@@ -97,7 +55,6 @@ class WalletDepositView(APIView):
         security=[{'Bearer': []}, {'APIKey': []}]
     )
     def post(self, request):
-       
         serializer = DepositRequestKoboSerializer(data=request.data)
         if not serializer.is_valid():
             logger.warning("Deposit request validation failed", errors=serializer.errors)
@@ -107,9 +64,8 @@ class WalletDepositView(APIView):
             )
         
         amount_kobo = serializer.validated_data['amount']
-        amount_ngn = amount_kobo / 100  
+        amount_ngn = amount_kobo / 100
         
-      
         email = request.user.email
         if not email:
             return Response(
@@ -118,27 +74,17 @@ class WalletDepositView(APIView):
             )
         
         try:
-           
-            wallet, created = Wallet.objects.get_or_create(
-                user=request.user,
-                defaults={'currency': 'NGN'}
-            )
-            
-            if created:
-                logger.info("Wallet created for user", user_id=str(request.user.id))
-            
+            # GET WALLET (NO LONGER CREATE IT HERE)
+            wallet = Wallet.objects.get(user=request.user)
             
             reference = f"DEP_{request.user.id}_{int(timezone.now().timestamp())}"
             
-            
             time_threshold = timezone.now() - timedelta(minutes=10)
             
-            
-            from transactions.models import Transaction
-            
+            # FIXED: Use Transaction from .models
             existing_transaction = Transaction.objects.filter(
                 user=request.user,
-                amount=amount_ngn,  
+                amount=amount_ngn,
                 status='pending',
                 created_at__gte=time_threshold
             ).order_by('-created_at').first()
@@ -154,7 +100,7 @@ class WalletDepositView(APIView):
                 response_data = {
                     'reference': existing_transaction.reference,
                     'authorization_url': existing_transaction.metadata.get('authorization_url', ''),
-                    'amount': amount_kobo,  
+                    'amount': amount_kobo,
                     'currency': 'NGN',
                     'status': 'pending',
                     'status_check_url': f"/wallet/deposit/{existing_transaction.reference}/status/",
@@ -169,8 +115,7 @@ class WalletDepositView(APIView):
                 response_serializer = DepositResponseSerializer(response_data)
                 return Response(response_serializer.data, status=status.HTTP_200_OK)
             
-           
-            result = PaystackService.initialize_transaction(email, amount_kobo)  
+            result = PaystackService.initialize_transaction(email, amount_kobo)
             
             if not result.get('success'):
                 logger.error(
@@ -188,36 +133,38 @@ class WalletDepositView(APIView):
                     status=status.HTTP_402_PAYMENT_REQUIRED
                 )
             
-            
             transaction = Transaction.objects.create(
                 user=request.user,
-                amount=amount_ngn,  
+                amount=amount_ngn,
                 transaction_type='deposit',
                 status='pending',
                 reference=reference,
                 metadata={
                     'authorization_url': result.get('authorization_url'),
                     'email': email,
-                    'amount_kobo': amount_kobo, 
+                    'amount_kobo': amount_kobo,
                     'amount_ngn': amount_ngn,
                     'paystack_reference': result.get('reference'),
-                    'paystack_response': result
+                    'paystack_response': result,
+                    'wallet_id': str(wallet.id),
+                    'wallet_number': wallet.wallet_number
                 }
             )
             
             logger.info(
                 "Deposit initialized successfully",
                 user_id=str(request.user.id),
+                wallet_id=str(wallet.id),
+                wallet_number=wallet.wallet_number,
                 amount_kobo=amount_kobo,
                 amount_ngn=amount_ngn,
                 reference=reference
             )
             
-            
             response_data = {
                 'reference': reference,
                 'authorization_url': result.get('authorization_url'),
-                'amount': amount_kobo,  
+                'amount': amount_kobo,
                 'currency': 'NGN',
                 'status': 'pending',
                 'status_check_url': f"/wallet/deposit/{reference}/status/",
@@ -232,6 +179,21 @@ class WalletDepositView(APIView):
             response_serializer = DepositResponseSerializer(response_data)
             return Response(response_serializer.data, status=status.HTTP_201_CREATED)
             
+        except Wallet.DoesNotExist:
+            logger.error(
+                "Wallet not found for deposit",
+                user_id=str(request.user.id),
+                email=email
+            )
+            
+            return Response(
+                {
+                    'error': 'Wallet not found',
+                    'message': 'You need to authenticate first to create a wallet.',
+                    'solution': 'Authenticate via Google OAuth to automatically create a wallet.'
+                },
+                status=status.HTTP_404_NOT_FOUND
+            )
         except Exception as e:
             logger.error(
                 "Unexpected error in deposit initialization",
@@ -285,7 +247,7 @@ class WalletTransferView(APIView):
         security=[{'Bearer': []}]
     )
     def post(self, request):
-      
+        # Create a serializer that accepts amount in Kobo
         class TransferKoboRequestSerializer(serializers.Serializer):
             wallet_number = serializers.CharField(
                 max_length=15,
@@ -341,13 +303,32 @@ class WalletTransferView(APIView):
         amount_kobo = serializer.validated_data['amount']
         description = serializer.validated_data.get('description', '')
         
-        
+        # Convert Kobo to NGN for database
         amount_ngn = amount_kobo / 100
         
-      
-        sender_wallet = get_object_or_404(Wallet, user=request.user)
+        try:
+            # GET SENDER WALLET (NO LONGER CREATED HERE - MUST EXIST FROM AUTHENTICATION)
+            sender_wallet = Wallet.objects.get(user=request.user)
+        except Wallet.DoesNotExist:
+            return Response(
+                {
+                    'status': 'failed',
+                    'message': 'Sender wallet not found. Please authenticate via Google OAuth first to create a wallet.'
+                },
+                status=status.HTTP_404_NOT_FOUND
+            )
         
+        # Check if sender wallet is active and not locked
+        if sender_wallet.status != 'active' or sender_wallet.is_locked:
+            return Response(
+                {
+                    'status': 'failed',
+                    'message': 'Your wallet is not active or has been locked. Please contact support.'
+                },
+                status=status.HTTP_400_BAD_REQUEST
+            )
         
+        # Check if recipient exists (using serializer context)
         recipient_wallet = serializer.context.get('recipient_wallet')
         if not recipient_wallet:
             return Response(
@@ -358,7 +339,7 @@ class WalletTransferView(APIView):
                 status=status.HTTP_404_NOT_FOUND
             )
         
-       
+        # Check if trying to transfer to self
         if sender_wallet.wallet_number == recipient_wallet.wallet_number:
             return Response(
                 {
@@ -378,21 +359,33 @@ class WalletTransferView(APIView):
                 status=status.HTTP_400_BAD_REQUEST
             )
         
+        # Check daily transfer limit
+        if sender_wallet.daily_limit and (sender_wallet.daily_spent + Decimal(str(amount_ngn))) > sender_wallet.daily_limit:
+            return Response(
+                {
+                    'status': 'failed',
+                    'message': f'Daily transfer limit exceeded. Daily limit: {sender_wallet.daily_limit} NGN, Already spent: {sender_wallet.daily_spent} NGN'
+                },
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
         try:
-           
+            # Perform the transfer
             from django.db import transaction as db_transaction
             
             with db_transaction.atomic():
-               
+                # Update sender balance
                 sender_wallet.balance -= Decimal(str(amount_ngn))
-                sender_wallet.save(update_fields=['balance', 'updated_at'])
                 
+                # Update sender daily spent
+                sender_wallet.daily_spent += Decimal(str(amount_ngn))
+                sender_wallet.save(update_fields=['balance', 'daily_spent', 'updated_at'])
                 
+                # Update recipient balance
                 recipient_wallet.balance += Decimal(str(amount_ngn))
                 recipient_wallet.save(update_fields=['balance', 'updated_at'])
                 
-                
-                from transactions.models import Transaction
+                # Create transaction record - USE LOCAL TRANSACTION MODEL
                 transaction = Transaction.objects.create(
                     sender=request.user,
                     recipient=recipient_wallet.user,
@@ -406,6 +399,8 @@ class WalletTransferView(APIView):
                         'transfer_type': 'wallet_to_wallet',
                         'sender_email': request.user.email,
                         'recipient_email': recipient_wallet.user.email,
+                        'sender_wallet_id': str(sender_wallet.id),
+                        'recipient_wallet_id': str(recipient_wallet.id),
                         'amount_kobo': amount_kobo,
                         'amount_ngn': str(amount_ngn)
                     }
@@ -414,8 +409,10 @@ class WalletTransferView(APIView):
                 logger.info(
                     "Transfer completed successfully",
                     transaction_id=str(transaction.id),
-                    sender=sender_wallet.wallet_number,
-                    recipient=recipient_wallet.wallet_number,
+                    sender_wallet_id=str(sender_wallet.id),
+                    sender_wallet_number=sender_wallet.wallet_number,
+                    recipient_wallet_id=str(recipient_wallet.id),
+                    recipient_wallet_number=recipient_wallet.wallet_number,
                     amount_kobo=amount_kobo,
                     amount_ngn=amount_ngn
                 )
@@ -424,7 +421,9 @@ class WalletTransferView(APIView):
                     'status': 'success',
                     'message': f'Transfer of {amount_kobo} Kobo ({amount_ngn} NGN) to wallet {wallet_number} completed successfully',
                     'transaction_id': transaction.id,
-                    'reference': transaction.reference
+                    'reference': transaction.reference,
+                    'amount_kobo': amount_kobo,
+                    'amount_ngn': amount_ngn
                 })
                 
                 return Response(response_serializer.data, status=status.HTTP_200_OK)
@@ -432,8 +431,9 @@ class WalletTransferView(APIView):
         except Exception as e:
             logger.error(
                 "Transfer failed",
-                sender=sender_wallet.wallet_number,
-                recipient=recipient_wallet.wallet_number,
+                sender_wallet_id=str(sender_wallet.id) if sender_wallet else None,
+                sender_wallet_number=sender_wallet.wallet_number if sender_wallet else None,
+                recipient_wallet_number=wallet_number,
                 amount_kobo=amount_kobo,
                 error=str(e)
             )
@@ -465,12 +465,18 @@ class WalletBalanceView(APIView):
                 'balance': wallet.balance,
                 'currency': wallet.currency,
                 'wallet_number': wallet.wallet_number,
-                'available_balance': wallet.balance
+                'available_balance': wallet.balance,
+                'wallet_id': str(wallet.id),
+                'status': wallet.status,
+                'daily_limit': wallet.daily_limit,
+                'daily_spent': wallet.daily_spent,
+                'is_locked': wallet.is_locked
             })
             
             logger.info(
                 "Balance retrieved",
                 user_id=str(request.user.id),
+                wallet_id=str(wallet.id),
                 wallet_number=wallet.wallet_number,
                 balance=str(wallet.balance)
             )
@@ -482,12 +488,8 @@ class WalletBalanceView(APIView):
             return Response(
                 {
                     'error': 'Wallet not found',
-                    'message': 'You need to create a wallet first.',
-                    'solution': 'Make a deposit to automatically create a wallet, or contact support.',
-                    'endpoints': {
-                        'create_via_deposit': 'POST /wallet/deposit/',
-                        'deposit_body_example': {'amount': 1000}
-                    }
+                    'message': 'You need to authenticate first to create a wallet.',
+                    'solution': 'Authenticate via Google OAuth to automatically create a wallet.'
                 },
                 status=status.HTTP_404_NOT_FOUND
             )
@@ -554,16 +556,12 @@ class DepositStatusView(APIView):
         refresh = request.GET.get('refresh', 'false').lower() == 'true'
         
         try:
-           
-            from transactions.models import Transaction
-            
-            
+            # FIXED: Use Transaction from .models
             transaction = Transaction.objects.get(
                 reference=reference,
                 user=request.user,
                 transaction_type='deposit'
             )
-            
             
             should_verify = (
                 refresh or 
@@ -575,18 +573,15 @@ class DepositStatusView(APIView):
             paystack_verification = None
             
             if should_verify:
-               
                 paystack_reference = transaction.metadata.get('paystack_reference')
                 if not paystack_reference and 'reference' in transaction.metadata:
                     paystack_reference = transaction.metadata.get('reference')
-                
                 
                 if paystack_reference:
                     paystack_verification = PaystackService.verify_transaction(paystack_reference)
                     
                     if paystack_verification.get('success'):
                         paystack_status = paystack_verification.get('status')
-                        
                         
                         status_mapping = {
                             'success': 'success',
@@ -597,21 +592,17 @@ class DepositStatusView(APIView):
                         
                         new_status = status_mapping.get(paystack_status, 'pending')
                         
-                        
                         if new_status != transaction.status:
                             transaction.status = new_status
                             
-                           
                             if 'data' in paystack_verification:
                                 transaction.metadata['paystack_verification'] = paystack_verification['data']
                                 transaction.metadata['last_verified_at'] = timezone.now().isoformat()
                             
-                           
                             if new_status == 'success':
                                 paid_at_str = paystack_verification.get('data', {}).get('paid_at')
                                 if paid_at_str:
                                     try:
-                                       
                                         from django.utils.dateparse import parse_datetime
                                         paid_at = parse_datetime(paid_at_str)
                                         if paid_at:
@@ -637,9 +628,7 @@ class DepositStatusView(APIView):
                             paystack_error=paystack_verification.get('message')
                         )
             
-            
             authorization_url = transaction.metadata.get('authorization_url', '')
-            
             
             requires_action = (
                 transaction.status == 'pending' and 
@@ -647,7 +636,6 @@ class DepositStatusView(APIView):
                 (not transaction.paid_at or 
                  timezone.now() - transaction.created_at < timedelta(minutes=30))
             )
-            
             
             amount_kobo = transaction.metadata.get('amount_kobo')
             if not amount_kobo and transaction.amount:
@@ -659,7 +647,7 @@ class DepositStatusView(APIView):
                 'amount_kobo': amount_kobo,
                 'amount_ngn': transaction.amount if transaction.amount else amount_kobo / 100,
                 'currency': 'NGN',
-                'paid_at': transaction.metadata.get('paid_at') if transaction.metadata.get('paid_at') else None,
+                'paid_at': transaction.paid_at.isoformat() if transaction.paid_at else None,
                 'authorization_url': authorization_url if requires_action else None,
                 'requires_action': requires_action,
                 'verified_with_paystack': paystack_verification is not None and paystack_verification.get('success'),
@@ -712,16 +700,12 @@ class DepositStatusView(APIView):
 @permission_classes([permissions.AllowAny])
 def paystack_webhook(request):
     """Handle Paystack webhook notifications"""
-    import json
-    
-    
     signature = request.headers.get('X-Paystack-Signature', '')
     payload = request.data
     
     if not PaystackService.verify_webhook_signature(payload, signature):
         logger.warning("Invalid webhook signature", signature=signature)
         return Response({'status': False}, status=status.HTTP_401_UNAUTHORIZED)
-    
     
     event = payload.get('event')
     data = payload.get('data', {})
@@ -735,13 +719,10 @@ def paystack_webhook(request):
     if event == 'charge.success':
         reference = data.get('reference')
         
-       
         result = PaystackService.verify_transaction(reference)
         
         if result['success'] and result['status'] == 'success':
-            
-            from transactions.models import Transaction
-            
+            # FIXED: Use Transaction from .models
             try:
                 transaction = Transaction.objects.get(
                     reference=reference,
@@ -749,11 +730,9 @@ def paystack_webhook(request):
                     status='pending'
                 )
                 
-               
                 transaction.status = 'success'
                 transaction.metadata['paystack_data'] = data
                 transaction.save(update_fields=['status', 'metadata', 'updated_at'])
-                
                 
                 wallet = Wallet.objects.get(user=transaction.user)
                 wallet.balance += transaction.amount
@@ -782,9 +761,7 @@ def paystack_webhook(request):
     elif event in ['charge.failed', 'transfer.failed']:
         reference = data.get('reference')
         
-        
-        from transactions.models import Transaction
-        
+        # FIXED: Use Transaction from .models
         try:
             transaction = Transaction.objects.filter(
                 reference=reference,

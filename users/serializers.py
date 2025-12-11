@@ -41,6 +41,7 @@ class TokenResponseSerializer(serializers.Serializer):
     access = serializers.CharField()
     refresh = serializers.CharField()
     user = UserSerializer()
+    wallet = serializers.DictField() 
     
     def create(self, validated_data):
         pass

@@ -109,6 +109,11 @@ class BalanceResponseSerializer(serializers.Serializer):
     currency = serializers.CharField()
     wallet_number = serializers.CharField()
     available_balance = serializers.DecimalField(max_digits=20, decimal_places=2)
+    wallet_id = serializers.CharField()
+    status = serializers.CharField()
+    daily_limit = serializers.DecimalField(max_digits=20, decimal_places=2, required=False)
+    daily_spent = serializers.DecimalField(max_digits=20, decimal_places=2, required=False)
+    is_locked = serializers.BooleanField(required=False)
     
     def create(self, validated_data):
         pass
